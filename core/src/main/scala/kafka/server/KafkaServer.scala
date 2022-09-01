@@ -106,7 +106,6 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   private var shutdownLatch = new CountDownLatch(1)
 
   private val jmxPrefix: String = "kafka.server"
-
   private var logContext: LogContext = null
 
   var metrics: Metrics = null
@@ -144,6 +143,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   private var _zkClient: KafkaZkClient = null
   val correlationId: AtomicInteger = new AtomicInteger(0)
   val brokerMetaPropsFile = "meta.properties"
+  //todo map结构[logdir, BrokerMetadataCheckpoint(可能read时为null， file=meta.property)]
   val brokerMetadataCheckpoints = config.logDirs.map(logDir => (logDir, new BrokerMetadataCheckpoint(new File(logDir + File.separator + brokerMetaPropsFile)))).toMap
 
   private var _clusterId: String = null
@@ -184,6 +184,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
    * Start up API for bringing up a single instance of the Kafka server.
    * Instantiates the LogManager, the SocketServer and the request handlers - KafkaRequestHandlers
    */
+  //todo 启动函数
   def startup() {
     try {
       info("starting")
@@ -206,6 +207,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         info(s"Cluster ID = $clusterId")
 
         /* generate brokerId */
+        // todo 判断logs目录中meta.properties是否正常，version不对或者无法读取则offline. 不存在meta时不会加入offline
         val (brokerId, initialOfflineDirs) = getBrokerIdAndOfflineDirs
         config.brokerId = brokerId
         logContext = new LogContext(s"[KafkaServer id=${config.brokerId}] ")
@@ -234,6 +236,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         logDirFailureChannel = new LogDirFailureChannel(config.logDirs.size)
 
         /* start log manager */
+        // todo 初始化logManager
         logManager = LogManager(config, initialOfflineDirs, zkClient, brokerState, kafkaScheduler, time, brokerTopicStats, logDirFailureChannel)
         logManager.startup()
 
@@ -246,17 +249,21 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         // Create and start the socket server acceptor threads so that the bound port is known.
         // Delay starting processors until the end of the initialization sequence to ensure
         // that credentials have been loaded before processing authentications.
+        //todo socketServer中生成全局唯一的requestChannel, 负责处理和解析请求，将请求加入requestChannel中。
+        //todo 一个服务, 有一个socketServer。 一个socketServer 有一个requestChannel， 有多个acceptor。一个acceptor有3个processor.
+        //todo 用于处理请求, 解析请求，写入requestChannel。 （handler线程处理完成以后，每个processor有一个responseQueue), 发送response。
         socketServer = new SocketServer(config, metrics, time, credentialProvider)
-        socketServer.startup(startupProcessors = false)
+        socketServer.startup(startupProcessors = false) //todo  创建acceptors, 并启动。 创建processor。
 
         /* start replica manager */
         replicaManager = createReplicaManager(isShuttingDown)
         replicaManager.startup()
 
+        // todo 注册broker节点的信息  /brokers/ids/{id}
         val brokerInfo = createBrokerInfo
         zkClient.registerBroker(brokerInfo)
-
         // Now that the broker id is successfully registered, checkpoint it
+        // todo 确认meta.property是否存在，不存在就写meta.property
         checkpointBrokerId(config.brokerId)
 
         /* start token manager */
@@ -264,6 +271,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         tokenManager.startup()
 
         /* start kafka controller */
+        //todo  KafkaController，负责zk管理  负责controller的注册和选举， 选举失败会退出controller
         kafkaController = new KafkaController(config, zkClient, time, metrics, brokerInfo, tokenManager, threadNamePrefix)
         kafkaController.startup()
 
@@ -291,10 +299,13 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
             KafkaServer.MIN_INCREMENTAL_FETCH_SESSION_EVICTION_MS))
 
         /* start processing requests */
+        //todo api的handle逻辑，需要在KafkaRequestHandlerPool中运行
         apis = new KafkaApis(socketServer.requestChannel, replicaManager, adminManager, groupCoordinator, transactionCoordinator,
           kafkaController, zkClient, config.brokerId, config, metadataCache, metrics, authorizer, quotaManagers,
           fetchManager, brokerTopicStats, clusterId, time, tokenManager)
 
+        // todo KafkaRequestHandlerPool 支持apis， config.numIoThreads 默认8个线程。创建守护进程
+        // todo 处理请求， socketServer 解析完成请求以后。
         requestHandlerPool = new KafkaRequestHandlerPool(config.brokerId, socketServer.requestChannel, apis, time,
           config.numIoThreads)
 
@@ -304,6 +315,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         config.dynamicConfig.addReconfigurables(this)
 
         /* start dynamic config manager */
+        // todo ConfigHandler
         dynamicConfigHandlers = Map[String, ConfigHandler](ConfigType.Topic -> new TopicConfigHandler(logManager, config, quotaManagers, kafkaController),
                                                            ConfigType.Client -> new ClientIdConfigHandler(quotaManagers),
                                                            ConfigType.User -> new UserConfigHandler(quotaManagers, credentialProvider),
@@ -313,7 +325,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         dynamicConfigManager = new DynamicConfigManager(zkClient, dynamicConfigHandlers)
         dynamicConfigManager.startup()
 
-        socketServer.startProcessors()
+        socketServer.startProcessors() //todo 启动processor
         brokerState.newState(RunningAsBroker)
         shutdownLatch = new CountDownLatch(1)
         startupComplete.set(true)
@@ -660,6 +672,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
     *
     * @return A 2-tuple containing the brokerId and a sequence of offline log directories.
     */
+  // todo 判断logs目录中meta.properties是否正常，version不对或者无法读取则offline
   private def getBrokerIdAndOfflineDirs: (Int, Seq[String]) = {
     var brokerId = config.brokerId
     val brokerIdSet = mutable.HashSet[Int]()
@@ -667,6 +680,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
     for (logDir <- config.logDirs) {
       try {
+        // todo logDir[meta.property]不存在时，read会返回为None，但是不抛出异常，不会加入offlineDirs
         val brokerMetadataOpt = brokerMetadataCheckpoints(logDir).read()
         brokerMetadataOpt.foreach { brokerMetadata =>
           brokerIdSet.add(brokerMetadata.brokerId)
@@ -697,6 +711,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   }
 
   private def checkpointBrokerId(brokerId: Int) {
+    //todo logDirsWithoutMetaProps缺少meta的dir
     var logDirsWithoutMetaProps: List[String] = List()
 
     for (logDir <- config.logDirs if logManager.isLogDirOnline(new File(logDir).getAbsolutePath)) {
@@ -707,6 +722,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
     for (logDir <- logDirsWithoutMetaProps) {
       val checkpoint = brokerMetadataCheckpoints(logDir)
+      //todo 写meta
       checkpoint.write(BrokerMetadata(brokerId))
     }
   }

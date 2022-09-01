@@ -135,6 +135,7 @@ class LogSegment private[log] (val log: FileRecords,
       ensureOffsetInRange(largestOffset)
 
       // append the messages
+      // todo   log->fileRecords 写文件，跟新size.
       val appendedBytes = log.append(records)
       trace(s"Appended $appendedBytes to ${log.file} at end offset $largestOffset")
       // Update the in memory max timestamp and corresponding offset.
@@ -143,7 +144,10 @@ class LogSegment private[log] (val log: FileRecords,
         offsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp
       }
       // append an entry to the index (if needed)
+      // todo bytesSinceLastIndexEntry 大于 indexIntervalBytes时 写索引
       if (bytesSinceLastIndexEntry > indexIntervalBytes) {
+        // todo index文件更新， position是字符偏移量
+        // todo index文件使用mmap的方式实现zero-copy
         offsetIndex.append(largestOffset, physicalPosition)
         timeIndex.maybeAppend(maxTimestampSoFar, offsetOfMaxTimestamp)
         bytesSinceLastIndexEntry = 0
@@ -273,8 +277,9 @@ class LogSegment private[log] (val log: FileRecords,
            minOneMessage: Boolean = false): FetchDataInfo = {
     if (maxSize < 0)
       throw new IllegalArgumentException(s"Invalid max size $maxSize for log read from segment $log")
-
+    //todo log文件的物理大小
     val logSize = log.sizeInBytes // this may change, need to save a consistent copy
+    //todo segment中的稀疏index中二分查找offset的lowerbound对应的真实文件偏移量，在顺序偏移找到真实偏移量
     val startOffsetAndSize = translateOffset(startOffset)
 
     // if the start position is already off the end of the log, return null
@@ -630,12 +635,14 @@ object LogSegment {
   def open(dir: File, baseOffset: Long, config: LogConfig, time: Time, fileAlreadyExists: Boolean = false,
            initFileSize: Int = 0, preallocate: Boolean = false, fileSuffix: String = ""): LogSegment = {
     val maxIndexSize = config.maxIndexSize
+    //todo logSegment 包含log文件和 offsetIndex文件
     new LogSegment(
       FileRecords.open(Log.logFile(dir, baseOffset, fileSuffix), fileAlreadyExists, initFileSize, preallocate),
       new OffsetIndex(Log.offsetIndexFile(dir, baseOffset, fileSuffix), baseOffset = baseOffset, maxIndexSize = maxIndexSize),
       new TimeIndex(Log.timeIndexFile(dir, baseOffset, fileSuffix), baseOffset = baseOffset, maxIndexSize = maxIndexSize),
       new TransactionIndex(baseOffset, Log.transactionIndexFile(dir, baseOffset, fileSuffix)),
       baseOffset,
+      // todo 默认indexInterval = 4KB
       indexIntervalBytes = config.indexInterval,
       rollJitterMs = config.randomSegmentJitter,
       time)

@@ -83,7 +83,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   }
 
   def registerBroker(brokerInfo: BrokerInfo): Unit = {
-    val path = brokerInfo.path
+    val path = brokerInfo.path //todo /brokers/ids/{id}
     checkedEphemeralCreate(path, brokerInfo.toJsonBytes)
     info(s"Registered broker ${brokerInfo.broker.id} at path $path with addresses: ${brokerInfo.broker.endPoints}")
   }
@@ -97,8 +97,8 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
   def registerControllerAndIncrementControllerEpoch(controllerId: Int): (Int, Int) = {
     val timestamp = time.milliseconds()
 
-    // Read /controller_epoch to get the current controller epoch and zkVersion,
-    // create /controller_epoch with initial value if not exists
+    // todo /controller_epoch 读取/controller_epoch # Read /controller_epoch to get the current controller epoch and zkVersion,
+    // todo create /controller_epoch with initial value if not exists
     val (curEpoch, curEpochZkVersion) = getControllerEpoch
       .map(e => (e._1, e._2.getVersion))
       .getOrElse(maybeCreateControllerEpochZNode())
@@ -109,6 +109,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
 
     debug(s"Try to create ${ControllerZNode.path} and increment controller epoch to $newControllerEpoch with expected controller epoch zkVersion $expectedControllerEpochZkVersion")
 
+    //todo path已经存在的情况
     def checkControllerAndEpoch(): (Int, Int) = {
       val curControllerId = getControllerId.getOrElse(throw new ControllerMovedException(
         s"The ephemeral node at ${ControllerZNode.path} went away while checking whether the controller election succeeds. " +
@@ -129,6 +130,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
 
     def tryCreateControllerZNodeAndIncrementEpoch(): (Int, Int) = {
       try {
+        //todo 使用事务 创建/controller 和 /controller_epoch
         val transaction = zooKeeperClient.createTransaction()
         transaction.create(ControllerZNode.path, ControllerZNode.encode(controllerId, timestamp),
           acls(ControllerZNode.path).asJava, CreateMode.EPHEMERAL)
@@ -140,7 +142,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
         case _: NodeExistsException | _: BadVersionException => checkControllerAndEpoch()
         case _: ConnectionLossException =>
           zooKeeperClient.waitUntilConnected()
-          tryCreateControllerZNodeAndIncrementEpoch()
+          tryCreateControllerZNodeAndIncrementEpoch() //todo 递归重试
       }
     }
 
@@ -283,7 +285,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
     val logConfigs = mutable.Map.empty[String, LogConfig]
     val failed = mutable.Map.empty[String, Exception]
     val configResponses = try {
-      getTopicConfigs(topics)
+      getTopicConfigs(topics) //todo /config/topics/{name}
     } catch {
       case e: Exception =>
         topics.foreach(topic => failed.put(topic, e))
@@ -427,6 +429,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
    * Gets all topics in the cluster.
    * @return sequence of topics in the cluster.
    */
+  // todo 获取所有的topic /brokers/topics
   def getAllTopicsInCluster: Seq[String] = {
     val getChildrenResponse = retryRequestUntilConnected(GetChildrenRequest(TopicsZNode.path))
     getChildrenResponse.resultCode match {
@@ -1017,6 +1020,7 @@ class KafkaZkClient private (zooKeeperClient: ZooKeeperClient, isSecure: Boolean
    * Gets the controller epoch.
    * @return optional (Int, Stat) that is Some if the controller epoch path exists and None otherwise.
    */
+  //todo 获取/controller_epoch
   def getControllerEpoch: Option[(Int, Stat)] = {
     val getDataRequest = GetDataRequest(ControllerEpochZNode.path)
     val getDataResponse = retryRequestUntilConnected(getDataRequest)

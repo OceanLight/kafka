@@ -31,6 +31,7 @@ public abstract class AbstractResponse extends AbstractRequestResponse {
     public static final int DEFAULT_THROTTLE_TIME = 0;
 
     protected Send toSend(String destination, ResponseHeader header, short apiVersion) {
+        //todo serialize把header和  apiVersion对应的body写入struct, 生成byteBuffer
         return new NetworkSend(destination, serialize(apiVersion, header));
     }
 

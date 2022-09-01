@@ -154,6 +154,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
      * @param records The records to append
      * @return the number of bytes written to the underlying file
      */
+    //todo log-> fileRecords 写文件，跟新size
     public int append(MemoryRecords records) throws IOException {
         if (records.sizeInBytes() > Integer.MAX_VALUE - size.get())
             throw new IllegalArgumentException("Append of size " + records.sizeInBytes() +

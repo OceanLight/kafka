@@ -456,7 +456,9 @@ public abstract class AbstractLegacyRecordBatch extends AbstractRecordBatch impl
 
         ByteBufferLegacyRecordBatch(ByteBuffer buffer) {
             this.buffer = buffer;
+            //todo读取log_overhead
             buffer.position(LOG_OVERHEAD);
+            //todo 读取record
             this.record = new LegacyRecord(buffer.slice());
             buffer.position(OFFSET_OFFSET);
         }

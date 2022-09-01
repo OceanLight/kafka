@@ -295,7 +295,7 @@ fi
 # Syntax used on the right side is native Bash string manipulation; for more details see
 # http://tldp.org/LDP/abs/html/string-manipulation.html, specifically the section titled "Substring Removal"
 CLASSPATH=${CLASSPATH#:}
-
+echo $CLASSPATH
 # If Cygwin is detected, classpath is converted to Windows format.
 (( CYGWIN )) && CLASSPATH=$(cygpath --path --mixed "${CLASSPATH}")
 

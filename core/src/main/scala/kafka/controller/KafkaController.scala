@@ -173,8 +173,8 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
         expireEvent.waitUntilProcessingStarted()
       }
     })
-    eventManager.put(Startup)
-    eventManager.start()
+    eventManager.put(Startup) //todo Startup 添加ControllerChangeEvent 并选举。
+    eventManager.start() //todo doWork函数会从events中不断的拉取event,并处理。
   }
 
   /**
@@ -234,8 +234,10 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     // before reading source of truth from zookeeper, register the listeners to get broker/topic callbacks
     val childChangeHandlers = Seq(brokerChangeHandler, topicChangeHandler, topicDeletionHandler, logDirEventNotificationHandler,
       isrChangeNotificationHandler)
+    //todo 唯一registerZNodeChildChangeHandler
     childChangeHandlers.foreach(zkClient.registerZNodeChildChangeHandler)
     val nodeChangeHandlers = Seq(preferredReplicaElectionHandler, partitionReassignmentHandler)
+    //todo 唯一registerZNodeChangeHandlerAndCheckExistence
     nodeChangeHandlers.foreach(zkClient.registerZNodeChangeHandlerAndCheckExistence)
 
     info("Deleting log dir event notifications")
@@ -289,6 +291,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
    * This callback is invoked by the zookeeper leader elector when the current broker resigns as the controller. This is
    * required to clean up internal controller data structures
    */
+  //todo
   private def onControllerResignation() {
     debug("Resigning")
     // de-register listeners
@@ -1124,7 +1127,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
       }
     }
   }
-
+  //todo controller 启动逻辑 选举主节点
   case object Startup extends ControllerEvent {
 
     def state = ControllerState.ControllerChange
@@ -1193,11 +1196,13 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     zkClient.registerZNodeChangeHandlerAndCheckExistence(controllerChangeHandler)
     activeControllerId = zkClient.getControllerId.getOrElse(-1)
     if (wasActiveBeforeChange && !isActive) {
-      onControllerResignation()
+      onControllerResignation() //todo 非主节点取消zookeeper watcher. 关闭controller。
     }
-  }
 
+  }
+  // todo 选举主节点
   private def elect(): Unit = {
+    //todo /controller
     activeControllerId = zkClient.getControllerId.getOrElse(-1)
     /*
      * We can get here during the initial startup and the handleDeleted ZK callback. Because of the potential race condition,
@@ -1210,6 +1215,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
     }
 
     try {
+      // todo 注册，如果被抢占抛出move异常
       val (epoch, epochZkVersion) = zkClient.registerControllerAndIncrementControllerEpoch(config.brokerId)
       controllerContext.epoch = epoch
       controllerContext.epochZkVersion = epochZkVersion
@@ -1505,7 +1511,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
 
     override def process(): Unit = {
       maybeResign()
-      elect()
+      elect()//todo 选举节点 选举失败就退出。
     }
   }
 
@@ -1514,7 +1520,7 @@ class KafkaController(val config: KafkaConfig, zkClient: KafkaZkClient, time: Ti
 
     override def process(): Unit = {
       zkClient.registerBroker(brokerInfo)
-      Reelect.process()
+      Reelect.process() //todo controller 选举主节点
     }
   }
 

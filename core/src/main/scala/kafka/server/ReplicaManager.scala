@@ -465,6 +465,7 @@ class ReplicaManager(val config: KafkaConfig,
    * the callback function will be triggered either when timeout or the required acks are satisfied;
    * if the callback function itself is already synchronized on some object then pass this object to avoid deadlock.
    */
+  //todo 追加Record，核心逻辑。
   def appendRecords(timeout: Long,
                     requiredAcks: Short,
                     internalTopicsAllowed: Boolean,
@@ -475,6 +476,7 @@ class ReplicaManager(val config: KafkaConfig,
                     recordConversionStatsCallback: Map[TopicPartition, RecordConversionStats] => Unit = _ => ()) {
     if (isValidRequiredAcks(requiredAcks)) {
       val sTime = time.milliseconds
+      //todo 追加log，返回offset等信息。 写入entriesPerPartition
       val localProduceResults = appendToLocalLog(internalTopicsAllowed = internalTopicsAllowed,
         isFromClient = isFromClient, entriesPerPartition, requiredAcks)
       debug("Produce to local log in %d ms".format(time.milliseconds - sTime))
@@ -487,7 +489,7 @@ class ReplicaManager(val config: KafkaConfig,
       }
 
       recordConversionStatsCallback(localProduceResults.mapValues(_.info.recordConversionStats))
-
+      // todo requiredAcks = -1的情况。
       if (delayedProduceRequestRequired(requiredAcks, entriesPerPartition, localProduceResults)) {
         // create delayed produce operation
         val produceMetadata = ProduceMetadata(requiredAcks, produceStatus)
@@ -745,8 +747,10 @@ class ReplicaManager(val config: KafkaConfig,
           LogAppendInfo.UnknownLogAppendInfo,
           Some(new InvalidTopicException(s"Cannot append to internal topic ${topicPartition.topic}"))))
       } else {
+        //todo 写入log的核心逻辑。
         try {
           val partition = getPartitionOrException(topicPartition, expectLeader = true)
+          //todo partition写record
           val info = partition.appendRecordsToLeader(records, isFromClient, requiredAcks)
           val numAppendedMessages = info.numMessages
 

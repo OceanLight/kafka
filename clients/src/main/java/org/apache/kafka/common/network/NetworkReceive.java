@@ -90,14 +90,14 @@ public class NetworkReceive implements Receive {
 
     public long readFrom(ScatteringByteChannel channel) throws IOException {
         int read = 0;
-        if (size.hasRemaining()) {
+        if (size.hasRemaining()) { //todo size是否没有写满 4个字节, 如果读完了size 直接读buffer, 没读完 继续读size
             int bytesRead = channel.read(size);
             if (bytesRead < 0)
                 throw new EOFException();
             read += bytesRead;
-            if (!size.hasRemaining()) {
-                size.rewind();
-                int receiveSize = size.getInt();
+            if (!size.hasRemaining()) { //todo size读完了
+                size.rewind(); // todo ByteBuffer position置0，用于size.getInt()
+                int receiveSize = size.getInt(); // todo 读取完size, hasRemaining=True
                 if (receiveSize < 0)
                     throw new InvalidReceiveException("Invalid receive (size = " + receiveSize + ")");
                 if (maxSize != UNLIMITED && receiveSize > maxSize)
@@ -109,12 +109,12 @@ public class NetworkReceive implements Receive {
             }
         }
         if (buffer == null && requestedBufferSize != -1) { //we know the size we want but havent been able to allocate it yet
-            buffer = memoryPool.tryAllocate(requestedBufferSize);
+            buffer = memoryPool.tryAllocate(requestedBufferSize); //todo 分配大小
             if (buffer == null)
                 log.trace("Broker low on memory - could not allocate buffer of size {} for source {}", requestedBufferSize, source);
         }
         if (buffer != null) {
-            int bytesRead = channel.read(buffer);
+            int bytesRead = channel.read(buffer); //todo 读取内容数据
             if (bytesRead < 0)
                 throw new EOFException();
             read += bytesRead;

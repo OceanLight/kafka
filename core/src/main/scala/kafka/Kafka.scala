@@ -72,7 +72,7 @@ object Kafka extends Logging {
         override def run(): Unit = kafkaServerStartable.shutdown()
       })
 
-      kafkaServerStartable.startup()
+      kafkaServerStartable.startup() //todo 进程唯一。启动一个KafkaServer, 创建唯一socketServer，创建多个acceptors, 每个acceptor生成多个processor
       kafkaServerStartable.awaitShutdown()
     }
     catch {

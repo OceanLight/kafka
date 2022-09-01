@@ -331,18 +331,18 @@ public class KafkaChannel {
         this.send = send;
         this.transportLayer.addInterestOps(SelectionKey.OP_WRITE);
     }
-
+    // todo 从socketChannel中读取数据，生成NetworkRecevie
     public NetworkReceive read() throws IOException {
         NetworkReceive result = null;
-
+        // todo kafkaChannel粒度唯一receive对象。
         if (receive == null) {
             receive = new NetworkReceive(maxReceiveSize, id, memoryPool);
         }
-
+        //todo 读取数据，读取size+buffer两个ByteBuffer数据。 可能需要多次读取数据。
         receive(receive);
         if (receive.complete()) {
-            receive.payload().rewind();
-            result = receive;
+            receive.payload().rewind(); //todo 读取完成以后buffer rewind
+            result = receive; // todo 返回result 非空
             receive = null;
         } else if (receive.requiredMemoryAmountKnown() && !receive.memoryAllocated() && isInMutableState()) {
             //pool must be out of memory, mute ourselves.
@@ -353,6 +353,7 @@ public class KafkaChannel {
 
     public Send write() throws IOException {
         Send result = null;
+        //todo 循环写入，直到写完位置
         if (send != null && send(send)) {
             result = send;
             send = null;

@@ -40,7 +40,7 @@ class ByteBufferLogInputStream implements LogInputStream<MutableRecordBatch> {
 
     public MutableRecordBatch nextBatch() {
         int remaining = buffer.remaining();
-
+        //todo 从buffer中读取batch的大小
         Integer batchSize = nextBatchSize();
         if (batchSize == null || remaining < batchSize)
             return null;
@@ -49,6 +49,7 @@ class ByteBufferLogInputStream implements LogInputStream<MutableRecordBatch> {
 
         ByteBuffer batchSlice = buffer.slice();
         batchSlice.limit(batchSize);
+        //修改buffer中position的位置
         buffer.position(buffer.position() + batchSize);
 
         if (magic > RecordBatch.MAGIC_VALUE_V1)
@@ -67,6 +68,7 @@ class ByteBufferLogInputStream implements LogInputStream<MutableRecordBatch> {
         int remaining = buffer.remaining();
         if (remaining < LOG_OVERHEAD)
             return null;
+        //todo 读取offset
         int recordSize = buffer.getInt(buffer.position() + SIZE_OFFSET);
         // V0 has the smallest overhead, stricter checking is done later
         if (recordSize < LegacyRecord.RECORD_OVERHEAD_V0)
@@ -78,7 +80,7 @@ class ByteBufferLogInputStream implements LogInputStream<MutableRecordBatch> {
 
         if (remaining < HEADER_SIZE_UP_TO_MAGIC)
             return null;
-
+        //todo magic
         byte magic = buffer.get(buffer.position() + MAGIC_OFFSET);
         if (magic < 0 || magic > RecordBatch.CURRENT_MAGIC_VALUE)
             throw new CorruptRecordException("Invalid magic found in record: " + magic);

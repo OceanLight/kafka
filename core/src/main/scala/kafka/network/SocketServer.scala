@@ -65,6 +65,7 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
   private val memoryPoolDepletedTimeMetricName = metrics.metricName("MemoryPoolDepletedTimeTotal", "socket-server-metrics")
   memoryPoolSensor.add(new Meter(TimeUnit.MILLISECONDS, memoryPoolDepletedPercentMetricName, memoryPoolDepletedTimeMetricName))
   private val memoryPool = if (config.queuedMaxBytes > 0) new SimpleMemoryPool(config.queuedMaxBytes, config.socketRequestMaxBytes, false, memoryPoolSensor) else MemoryPool.NONE
+  // todo 请求队列. 全局唯一，底层使用ArrayBlockingQueue, 队列存储500个请求。
   val requestChannel = new RequestChannel(maxQueuedRequests)
   private val processors = new ConcurrentHashMap[Int, Processor]()
   private var nextProcessorId = 0
@@ -85,9 +86,11 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
    *
    * @param startupProcessors Flag indicating whether `Processor`s must be started.
    */
+  //todo  创建acceptors, 并启动。 创建processor。
   def startup(startupProcessors: Boolean = true) {
     this.synchronized {
       connectionQuotas = new ConnectionQuotas(config.maxConnectionsPerIp, config.maxConnectionsPerIpOverrides)
+      // config.numNetworkThreads = 3
       createAcceptorAndProcessors(config.numNetworkThreads, config.listeners)
       if (startupProcessors) {
         startProcessors()
@@ -132,6 +135,8 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
 
   private def endpoints = config.listeners.map(l => l.listenerName -> l).toMap
 
+  //todo processorsPerListener - config.numNetworkThreads 默认3。
+  //todo 启动acceptor线程 每个acceptor启动3个Processor线程
   private def createAcceptorAndProcessors(processorsPerListener: Int,
                                           endpoints: Seq[EndPoint]): Unit = synchronized {
 
@@ -142,11 +147,15 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
     endpoints.foreach { endpoint =>
       val listenerName = endpoint.listenerName
       val securityProtocol = endpoint.securityProtocol
-
+      // TODO 每个对端构造一个acceptor对象. 初始化nioSelector 和 ServerSocketChannel. ServerSocketChannel.register(nioSelector, SelectionKey.OP_ACCEPT)
       val acceptor = new Acceptor(endpoint, sendBufferSize, recvBufferSize, brokerId, connectionQuotas)
+      // todo 一个acceptor 添加processorsPerListener： 3个 processor。 并启动processor线程
       addProcessors(acceptor, endpoint, processorsPerListener)
+      // todo 启动acceptor的线程
       KafkaThread.nonDaemon(s"kafka-socket-acceptor-$listenerName-$securityProtocol-${endpoint.port}", acceptor).start()
-      acceptor.awaitStartup()
+      acceptor.awaitStartup() //todo 等待acceptor线程启动完成。
+
+      // todo 初始化acceptors。 val acceptors = new ConcurrentHashMap[EndPoint, Acceptor]()
       acceptors.put(endpoint, acceptor)
     }
   }
@@ -163,7 +172,7 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
       nextProcessorId += 1
     }
     listenerProcessors.foreach(p => processors.put(p.id, p))
-    acceptor.addProcessors(listenerProcessors)
+    acceptor.addProcessors(listenerProcessors) // todo 启动processor线程
   }
 
   /**
@@ -215,6 +224,7 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
 
   def addListeners(listenersAdded: Seq[EndPoint]): Unit = synchronized {
     info(s"Adding listeners for endpoints $listenersAdded")
+    //todo config.numNetworkThreads 默认3
     createAcceptorAndProcessors(config.numNetworkThreads, listenersAdded)
     startProcessors()
   }
@@ -268,6 +278,7 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
 /**
  * A base class with some helper variables and methods
  */
+//todo 实现quota自动减一
 private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQuotas) extends Runnable with Logging {
 
   private val startupLatch = new CountDownLatch(1)
@@ -293,11 +304,13 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
   /**
    * Wait for the thread to completely start up
    */
+  //todo 等待线程完全启动结束
   def awaitStartup(): Unit = startupLatch.await
 
   /**
    * Record that the thread startup is complete
    */
+  // todo 启动完成
   protected def startupComplete(): Unit = {
     // Replace the open latch with a closed one
     shutdownLatch = new CountDownLatch(1)
@@ -330,6 +343,7 @@ private[kafka] abstract class AbstractServerThread(connectionQuotas: ConnectionQ
 /**
  * Thread that accepts and configures new connections. There is one of these per endpoint.
  */
+// todo 继承自runnable接口, 初始化nioSelector 和 serverChannel。 维护processors列表，默认3个。
 private[kafka] class Acceptor(val endPoint: EndPoint,
                               val sendBufferSize: Int,
                               val recvBufferSize: Int,
@@ -339,8 +353,9 @@ private[kafka] class Acceptor(val endPoint: EndPoint,
   private val nioSelector = NSelector.open()
   val serverChannel = openServerSocket(endPoint.host, endPoint.port)
   private val processors = new ArrayBuffer[Processor]()
-  private val processorsStarted = new AtomicBoolean
+  private val processorsStarted = new AtomicBoolean //todo 默认值是false
 
+  // todo
   private[network] def addProcessors(newProcessors: Buffer[Processor]): Unit = synchronized {
     processors ++= newProcessors
     if (processorsStarted.get)
@@ -352,7 +367,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint,
       startProcessors(processors)
     }
   }
-
+  //todo 传入runnable 并运行
   private def startProcessors(processors: Seq[Processor]): Unit = synchronized {
     processors.foreach { processor =>
       KafkaThread.nonDaemon(s"kafka-network-thread-$brokerId-${endPoint.listenerName}-${endPoint.securityProtocol}-${processor.id}",
@@ -455,6 +470,7 @@ private[kafka] class Acceptor(val endPoint: EndPoint,
   /*
    * Accept a new connection
    */
+  //todo
   def accept(key: SelectionKey, processor: Processor) {
     val serverSocketChannel = key.channel().asInstanceOf[ServerSocketChannel]
     val socketChannel = serverSocketChannel.accept()
@@ -497,6 +513,8 @@ private[kafka] object Processor {
  * Thread that processes all requests from a single connection. There are N of these running in parallel
  * each of which has its own selector
  */
+//todo 继承自runnable，实现run接口 可以start. 每个processor构造一个selector。
+//todo 负责处理response
 private[kafka] class Processor(val id: Int,
                                time: Time,
                                maxRequestSize: Int,
@@ -528,6 +546,7 @@ private[kafka] class Processor(val id: Int,
     override def toString: String = s"$localHost:$localPort-$remoteHost:$remotePort-$index"
   }
 
+  //todo  newConnections 存储请求的长连接
   private val newConnections = new ConcurrentLinkedQueue[SocketChannel]()
   private val inflightResponses = mutable.Map[String, RequestChannel.Response]()
   private val responseQueue = new LinkedBlockingDeque[RequestChannel.Response]()
@@ -581,19 +600,30 @@ private[kafka] class Processor(val id: Int,
   // non-negative incrementing value that ensures that even if remotePort is reused after a connection is
   // closed, connection ids are not reused while requests from the closed connection are being processed.
   private var nextConnectionIndex = 0
-
+  //todo 一个acceptor,有一个监听的selector,有3个 processor, 每个processor有一个读数据的selector。
+  //todo processor的run方法，有一个selector, selector中有一个Map<KafkaChannel, Deque<NetworkReceive>> stagedReceives; 用于存储NetworkReceive
   override def run() {
-    startupComplete()
+    startupComplete() //todo 状态调整
     try {
       while (isRunning) {
         try {
           // setup any new connections that have been queued up
+          // todo 从newConnections中获取新请求socketChannel 加入selector中监听，并attach了KafkaChannel，并设置id = connectionId(channel.socket)
           configureNewConnections()
           // register any new responses for writing
+          // todo 从processor中的responseQueue队列中获取并send，处理返回。 inflightResponses添加send， selector关注write
           processNewResponses()
+          // todo 从网络中去读取二进制数据，从channel中读取数据，生成多个NetworkReceive， 每个channel移动一个NetworkReceive到completedReceives
+          // todo NetworkReceive的source = KafkaChannel的Id
+          // todo 如果可写就写数据。
+          // todo 300ms的timeout
           poll()
+          // todo 将byteBuffer转化成Struct, 在转化成request， 在转化成Send 加入requestQueue队列，等待后处理, 由handler去处理请求，并生成Response
+          // todo mute selectoer
           processCompletedReceives()
+          // todo send后的回调和 unmute selector
           processCompletedSends()
+          // todo 释放连接
           processDisconnected()
         } catch {
           // We catch all the throwables here to prevent the processor thread from exiting. We do this because
@@ -626,10 +656,10 @@ private[kafka] class Processor(val id: Int,
     }
     processException(errorMessage, throwable)
   }
-
+  //todo 处理response
   private def processNewResponses() {
     var currentResponse: RequestChannel.Response = null
-    while ({currentResponse = dequeueResponse(); currentResponse != null}) {
+    while ({currentResponse = dequeueResponse(); currentResponse != null}) { //todo 从responseQueue中获取请求。
       val channelId = currentResponse.request.context.connectionId
       try {
         currentResponse match {
@@ -643,7 +673,7 @@ private[kafka] class Processor(val id: Int,
             // throttling delay has already passed by now.
             handleChannelMuteEvent(channelId, ChannelMuteEvent.RESPONSE_SENT)
             tryUnmuteChannel(channelId)
-
+          //todo 发送response
           case response: SendResponse =>
             sendResponse(response, response.responseSend)
           case response: CloseConnectionResponse =>
@@ -698,16 +728,17 @@ private[kafka] class Processor(val id: Int,
   private def processCompletedReceives() {
     selector.completedReceives.asScala.foreach { receive =>
       try {
-        openOrClosingChannel(receive.source) match {
+        openOrClosingChannel(receive.source) match { //todo selector 根据KafkaChannel的id查找到kafkaChannel
           case Some(channel) =>
-            val header = RequestHeader.parse(receive.payload)
+            val header = RequestHeader.parse(receive.payload) // todo 仅基于payload（buffer） 生成header， 但未解析数据
             val connectionId = receive.source
             val context = new RequestContext(header, connectionId, channel.socketAddress,
               channel.principal, listenerName, securityProtocol)
+            //todo buffer内容转化成struct, 在转化成Request对象
             val req = new RequestChannel.Request(processor = id, context = context,
               startTimeNanos = time.nanoseconds, memoryPool, receive.payload, requestChannel.metrics)
-            requestChannel.sendRequest(req)
-            selector.mute(connectionId)
+            requestChannel.sendRequest(req) //todo 将request转化成send对象加入requestQueue队列，等待后处理
+            selector.mute(connectionId) //todo mute掉读数据的操作
             handleChannelMuteEvent(connectionId, ChannelMuteEvent.REQUEST_RECEIVED)
           case None =>
             // This should never happen since completed receives are processed immediately after `poll()`
@@ -752,6 +783,7 @@ private[kafka] class Processor(val id: Int,
   }
 
   private def processDisconnected() {
+    // todo 失败的写入disconnected, 释放连接
     selector.disconnected.keySet.asScala.foreach { connectionId =>
       try {
         val remoteHost = ConnectionId.fromString(connectionId).getOrElse {
@@ -788,6 +820,7 @@ private[kafka] class Processor(val id: Int,
   /**
    * Queue up a new connection for reading
    */
+  // todo  newConnections 新增 socketChannel。 socketChannel = serverChannel.accpet()
   def accept(socketChannel: SocketChannel) {
     newConnections.add(socketChannel)
     wakeup()
@@ -801,6 +834,7 @@ private[kafka] class Processor(val id: Int,
       val channel = newConnections.poll()
       try {
         debug(s"Processor $id listening to new connection from ${channel.socket.getRemoteSocketAddress}")
+        //todo  生成KafkaChannel 并设置id = connectionId(channel.socket)
         selector.register(connectionId(channel.socket), channel)
       } catch {
         // We explicitly catch all exceptions and close the socket to avoid a socket leak.
@@ -887,6 +921,7 @@ private[kafka] class Processor(val id: Int,
 
 }
 
+// todo 负责连接quota管理。 inc +1   dec -1
 class ConnectionQuotas(val defaultMax: Int, overrideQuotas: Map[String, Int]) {
 
   @volatile private var defaultMaxConnectionsPerIp = defaultMax

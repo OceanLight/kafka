@@ -237,10 +237,11 @@ public class ProduceRequest extends AbstractRequest {
             result.put(entry.getKey(), entry.getValue().sizeInBytes());
         return result;
     }
-
+    // todo 处理request 生成对象request对象。
     public ProduceRequest(Struct struct, short version) {
         super(ApiKeys.PRODUCE, version);
         partitionRecords = new HashMap<>();
+        // todo 生成partitionRecords
         for (Object topicDataObj : struct.getArray(TOPIC_DATA_KEY_NAME)) {
             Struct topicData = (Struct) topicDataObj;
             String topic = topicData.get(TOPIC_NAME);
@@ -393,6 +394,7 @@ public class ProduceRequest extends AbstractRequest {
     public static void validateRecords(short version, MemoryRecords records) {
         if (version >= 3) {
             Iterator<MutableRecordBatch> iterator = records.batches().iterator();
+            //遍历获取batch
             if (!iterator.hasNext())
                 throw new InvalidRecordException("Produce requests with version " + version + " must have at least " +
                     "one record batch");

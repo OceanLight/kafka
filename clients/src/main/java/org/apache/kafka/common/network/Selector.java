@@ -471,6 +471,7 @@ public class Selector implements Selectable, AutoCloseable {
                 keysWithBufferedRead.removeAll(readyKeys); //so no channel gets polled twice
                 Set<SelectionKey> toPoll = keysWithBufferedRead;
                 keysWithBufferedRead = new HashSet<>(); //poll() calls will repopulate if needed
+                //todo 核心函数 从channel中读取数据，生成多个NetworkReceive
                 pollSelectionKeys(toPoll, false, endSelect);
             }
 
@@ -497,6 +498,7 @@ public class Selector implements Selectable, AutoCloseable {
 
         // Add to completedReceives after closing expired connections to avoid removing
         // channels with completed receives until all staged receives are completed.
+        //todo 每个channel移动一个NetworkReceive到completedReceives
         addToCompletedReceives();
     }
 
@@ -522,8 +524,9 @@ public class Selector implements Selectable, AutoCloseable {
 
             try {
                 /* complete any connections that have finished their handshake (either normally or immediately) */
+                // todo 握手
                 if (isImmediatelyConnected || key.isConnectable()) {
-                    if (channel.finishConnect()) {
+                    if (channel.finishConnect()) { //todo 判断连接是否建立+鉴权
                         this.connected.add(channel.id());
                         this.sensors.connectionCreated.record();
                         SocketChannel socketChannel = (SocketChannel) key.channel();
@@ -536,7 +539,7 @@ public class Selector implements Selectable, AutoCloseable {
                         continue;
                     }
                 }
-
+                //todo 连接就绪
                 /* if channel is not ready finish prepare */
                 if (channel.isConnected() && !channel.ready()) {
                     try {
@@ -548,7 +551,8 @@ public class Selector implements Selectable, AutoCloseable {
                     if (channel.ready())
                         sensors.successfulAuthentication.record();
                 }
-
+                // todo 读取数据， 从channel中读取数据，生成多个NetworkReceive。
+                // todo
                 attemptRead(key, channel);
 
                 if (channel.hasBytesBuffered()) {
@@ -560,7 +564,7 @@ public class Selector implements Selectable, AutoCloseable {
                     //cleared to avoid the overhead of checking every time.
                     keysWithBufferedRead.add(key);
                 }
-
+                //todo 写数据
                 /* if channel is ready write to any sockets that have space in their buffer and for which we have data */
                 if (channel.ready() && key.isWritable()) {
                     Send send;
@@ -617,9 +621,9 @@ public class Selector implements Selectable, AutoCloseable {
         if (channel.ready() && (key.isReadable() || channel.hasBytesBuffered()) && !hasStagedReceive(channel)
             && !explicitlyMutedChannels.contains(channel)) {
             NetworkReceive networkReceive;
-            while ((networkReceive = channel.read()) != null) {
+            while ((networkReceive = channel.read()) != null) { //todo 读取多个networkReceive数据
                 madeReadProgressLastPoll = true;
-                addToStagedReceives(channel, networkReceive);
+                addToStagedReceives(channel, networkReceive); //todo 每个连接对应一个kafkaChannel，一个kakfaChannel对应一个list
             }
             if (channel.isMute()) {
                 outOfMemory = true; //channel has muted itself due to memory pressure.
@@ -945,9 +949,9 @@ public class Selector implements Selectable, AutoCloseable {
             while (iter.hasNext()) {
                 Map.Entry<KafkaChannel, Deque<NetworkReceive>> entry = iter.next();
                 KafkaChannel channel = entry.getKey();
-                if (!explicitlyMutedChannels.contains(channel)) {
+                if (!explicitlyMutedChannels.contains(channel)) {// todo 没有mute
                     Deque<NetworkReceive> deque = entry.getValue();
-                    addToCompletedReceives(channel, deque);
+                    addToCompletedReceives(channel, deque); //todo 每个channel移动一个NetworkReceive到completedReceives
                     if (deque.isEmpty())
                         iter.remove();
                 }

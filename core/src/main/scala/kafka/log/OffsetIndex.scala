@@ -138,6 +138,8 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    * Append an entry for the given offset/location pair to the index. This entry must have a larger offset than all subsequent entries.
    * @throws InvalidOffsetException if the offset causes index offset to overflow
    */
+  // todo index文件更新， position是字符偏移量
+  // todo index文件使用mmap的方式实现zero-copy
   def append(offset: Long, position: Int) {
     inLock(lock) {
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")

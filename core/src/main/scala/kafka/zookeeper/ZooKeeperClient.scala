@@ -84,6 +84,8 @@ class ZooKeeperClient(connectString: String,
   }
 
   info(s"Initializing a new session to $connectString.")
+
+  //todo zooKeeper初始化，添加ZooKeeperClientWatcher监控
   // Fail-fast if there's an error during construction (so don't call initialize, which retries forever)
   @volatile private var zooKeeper = new ZooKeeper(connectString, sessionTimeoutMs, ZooKeeperClientWatcher)
 
@@ -430,6 +432,8 @@ class ZooKeeperClient(connectString: String,
   }
 
   // package level visibility for testing only
+  // todo zookeeper watcher. event包含path和Type. 注册四种监听事件，handler根据type和path路由到handler
+  // todo handler中process, 只能获取到type和path的事件，具体数据需要重新获取数据
   private[zookeeper] object ZooKeeperClientWatcher extends Watcher {
     override def process(event: WatchedEvent): Unit = {
       debug(s"Received event: $event")

@@ -394,12 +394,15 @@ class KafkaApis(val requestChannel: RequestChannel,
     val unauthorizedTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val nonExistingTopicResponses = mutable.Map[TopicPartition, PartitionResponse]()
     val invalidRequestResponses = mutable.Map[TopicPartition, PartitionResponse]()
+    //todo 有效的requestInfo
     val authorizedRequestInfo = mutable.Map[TopicPartition, MemoryRecords]()
 
     for ((topicPartition, memoryRecords) <- produceRequest.partitionRecordsOrFail.asScala) {
+      // todo 无权限
       if (!authorize(request.session, Write, Resource(Topic, topicPartition.topic, LITERAL)))
         unauthorizedTopicResponses += topicPartition -> new PartitionResponse(Errors.TOPIC_AUTHORIZATION_FAILED)
       else if (!metadataCache.contains(topicPartition))
+        //todo partition不存在
         nonExistingTopicResponses += topicPartition -> new PartitionResponse(Errors.UNKNOWN_TOPIC_OR_PARTITION)
       else
         try {
@@ -412,6 +415,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
 
     // the callback for sending a produce response
+    //todo callback 函数，最后调用callback
     def sendResponseCallback(responseStatus: Map[TopicPartition, PartitionResponse]) {
       val mergedResponseStatus = responseStatus ++ unauthorizedTopicResponses ++ nonExistingTopicResponses ++ invalidRequestResponses
       var errorInResponse = false
@@ -443,7 +447,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           quotas.request.throttle(request, requestThrottleTimeMs, sendResponse)
         }
       }
-
+      //todo 回调函数，生成Response对象，封装成Send，放入responseQueue
       // Send the response immediately. In case of throttling, the channel has already been muted.
       if (produceRequest.acks == 0) {
         // no operation needed if producer request.required.acks = 0; however, if there is any error in handling
@@ -458,6 +462,7 @@ class KafkaApis(val requestChannel: RequestChannel,
               s"from client id ${request.header.clientId} with ack=0\n" +
               s"Topic and partition to exceptions: $exceptionsSummary"
           )
+          // todo 异常类型返回
           closeConnection(request, new ProduceResponse(mergedResponseStatus.asJava).errorCounts)
         } else {
           // Note that although request throttling is exempt for acks == 0, the channel may be throttled due to
@@ -481,6 +486,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       val internalTopicsAllowed = request.header.clientId == AdminUtils.AdminClientId
 
       // call the replica manager to append messages to the replicas
+      // todo 消息处理的核心逻辑, 在replicaManager中调用回调函数sendResponseCallback，发送send
       replicaManager.appendRecords(
         timeout = produceRequest.timeout.toLong,
         requiredAcks = produceRequest.acks,
@@ -692,6 +698,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       processResponseCallback(Seq.empty)
     else {
       // call the replica manager to fetch messages from the local replica
+      // todo relicaManager fetch messages
       replicaManager.fetchMessages(
         fetchRequest.maxWait.toLong,
         fetchRequest.replicaId,
@@ -1015,9 +1022,9 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     trace("Sending topic metadata %s and brokers %s for correlation id %d to client %s".format(completeTopicMetadata.mkString(","),
       brokers.mkString(","), request.header.correlationId, request.header.clientId))
-
+    //todo 传递request对象用于获取processorId。  将SendResponse加入processor中的responseQueue队列中
     sendResponseMaybeThrottle(request, requestThrottleMs =>
-      new MetadataResponse(
+      new MetadataResponse( // todo 生成response对象。
         requestThrottleMs,
         brokers.flatMap(_.getNode(request.context.listenerName)).asJava,
         clusterId,
@@ -2247,6 +2254,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   // Throttle the channel if the request quota is enabled but has been violated. Regardless of throttling, send the
   // response immediately.
+  // todo 返回response的核心方法, 将Response加入processor中的responseQueue队列中
   private def sendResponseMaybeThrottle(request: RequestChannel.Request,
                                         createResponse: Int => AbstractResponse,
                                         onComplete: Option[Send => Unit] = None): Unit = {
@@ -2302,14 +2310,17 @@ class KafkaApis(val requestChannel: RequestChannel,
 
     val response = responseOpt match {
       case Some(response) =>
+        //todo 转化成Send类型用于发送， 基于byteBuffer
         val responseSend = request.context.buildResponse(response)
         val responseString =
           if (RequestChannel.isRequestLoggingEnabled) Some(response.toString(request.context.apiVersion))
           else None
+        //todo 构造SendResponse对象，有数据的正常返回。
         new RequestChannel.SendResponse(request, responseSend, responseString, onComplete)
       case None =>
         new RequestChannel.NoOpResponse(request)
     }
+    //todo 由requestChannel对象， 从request中processorid找到processor, 将response对象写入responseQueue
     sendResponse(response)
   }
 

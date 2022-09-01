@@ -819,6 +819,7 @@ class Log(@volatile var dir: File,
    * @throws KafkaStorageException If the append fails due to an I/O error.
    * @return Information about the appended messages including the first and last offset.
    */
+  //todo 作为leader 从客户端传数据。
   def appendAsLeader(records: MemoryRecords, leaderEpoch: Int, isFromClient: Boolean = true,
                      interBrokerProtocolVersion: ApiVersion = ApiVersion.latestVersion): LogAppendInfo = {
     append(records, isFromClient, interBrokerProtocolVersion, assignOffsets = true, leaderEpoch)
@@ -831,6 +832,7 @@ class Log(@volatile var dir: File,
    * @throws KafkaStorageException If the append fails due to an I/O error.
    * @return Information about the appended messages including the first and last offset.
    */
+  //todo 作为follower， 从leader fetch数据。
   def appendAsFollower(records: MemoryRecords): LogAppendInfo = {
     append(records, isFromClient = false, interBrokerProtocolVersion = ApiVersion.latestVersion, assignOffsets = false, leaderEpoch = -1)
   }
@@ -851,11 +853,14 @@ class Log(@volatile var dir: File,
    * @throws UnexpectedAppendOffsetException If the first or last offset in append is less than next offset
    * @return Information about the appended messages including the first and last offset.
    */
+  //todo log追加records，assignOffsets 分配offset
   private def append(records: MemoryRecords, isFromClient: Boolean, interBrokerProtocolVersion: ApiVersion, assignOffsets: Boolean, leaderEpoch: Int): LogAppendInfo = {
     maybeHandleIOException(s"Error while appending records to $topicPartition in dir ${dir.getParent}") {
+      //todo crc校验数据、并返回源数据。
       val appendInfo = analyzeAndValidateRecords(records, isFromClient = isFromClient)
 
       // return if we have no valid messages or if this is a duplicate of the last appended entry
+      //todo 数据条数
       if (appendInfo.shallowCount == 0)
         return appendInfo
 
@@ -865,12 +870,15 @@ class Log(@volatile var dir: File,
       // they are valid, insert them in the log
       lock synchronized {
         checkIfMemoryMappedBufferClosed()
+        //todo 分配offset, 从nextOffsetMetadata获取。
         if (assignOffsets) {
           // assign offsets to the message set
+
           val offset = new LongRef(nextOffsetMetadata.messageOffset)
           appendInfo.firstOffset = Some(offset.value)
           val now = time.milliseconds
           val validateAndOffsetAssignResult = try {
+            //todo 更新offset
             LogValidator.validateMessagesAndAssignOffsets(validRecords,
               offset,
               time,
@@ -951,6 +959,7 @@ class Log(@volatile var dir: File,
         }
 
         // check messages set size may be exceed config.segmentSize
+        // todo 默认segSize = 1G
         if (validRecords.sizeInBytes > config.segmentSize) {
           throw new RecordBatchTooLargeException(s"Message batch size is ${validRecords.sizeInBytes} bytes in append " +
             s"to partition $topicPartition, which exceeds the maximum configured segment size of ${config.segmentSize}.")
@@ -966,7 +975,7 @@ class Log(@volatile var dir: File,
           appendInfo.logStartOffset = logStartOffset
           return appendInfo
         }
-
+        //todo 核心
         // maybe roll the log if this segment is full
         val segment = maybeRoll(validRecords.sizeInBytes, appendInfo)
 
@@ -974,7 +983,7 @@ class Log(@volatile var dir: File,
           messageOffset = appendInfo.firstOrLastOffsetOfFirstBatch,
           segmentBaseOffset = segment.baseOffset,
           relativePositionInSegment = segment.size)
-
+        //todo log文件写数据， index文件写索引。
         segment.append(largestOffset = appendInfo.lastOffset,
           largestTimestamp = appendInfo.maxTimestamp,
           shallowOffsetOfMaxTimestamp = appendInfo.offsetOfMaxTimestamp,
@@ -986,6 +995,7 @@ class Log(@volatile var dir: File,
         // will be cleaned up after the log directory is recovered. Note that the end offset of the
         // ProducerStateManager will not be updated and the last stable offset will not advance
         // if the append to the transaction index fails.
+        //todo 更新offset
         updateLogEndOffset(appendInfo.lastOffset + 1)
 
         // update the producer state
@@ -1013,7 +1023,7 @@ class Log(@volatile var dir: File,
           s"first offset: ${appendInfo.firstOffset}, " +
           s"next offset: ${nextOffsetMetadata.messageOffset}, " +
           s"and messages: $validRecords")
-
+        //todo 主动flush的时间
         if (unflushedMessages >= config.flushInterval)
           flush()
 
@@ -1125,6 +1135,7 @@ class Log(@volatile var dir: File,
    * <li> Whether any compression codec is used (if many are used, then the last one is given)
    * </ol>
    */
+  //todo 仅仅分析records
   private def analyzeAndValidateRecords(records: MemoryRecords, isFromClient: Boolean): LogAppendInfo = {
     var shallowMessageCount = 0
     var validBytesCount = 0
@@ -1165,6 +1176,7 @@ class Log(@volatile var dir: File,
 
       // Check if the message sizes are valid.
       val batchSize = batch.sizeInBytes
+      //todo config.maxMessageSize 默认100w
       if (batchSize > config.maxMessageSize) {
         brokerTopicStats.topicStats(topicPartition.topic).bytesRejectedRate.mark(records.sizeInBytes)
         brokerTopicStats.allTopicsStats.bytesRejectedRate.mark(records.sizeInBytes)
@@ -1173,6 +1185,7 @@ class Log(@volatile var dir: File,
       }
 
       // check the validity of the message by checking CRC
+      // todo crc校验， 校验其中的每个batch，单独校验
       batch.ensureValid()
 
       if (batch.maxTimestamp > maxTimestamp) {
@@ -1182,14 +1195,17 @@ class Log(@volatile var dir: File,
 
       shallowMessageCount += 1
       validBytesCount += batchSize
-
+      //todo 压缩格式  目前支持gzip/snappy/lz4/zstd。
       val messageCodec = CompressionCodec.getCompressionCodec(batch.compressionType.id)
       if (messageCodec != NoCompressionCodec)
         sourceCodec = messageCodec
     }
 
     // Apply broker-side compression if any
+    //todo 目标编码方式
     val targetCodec = BrokerCompressionCodec.getTargetCompressionCodec(config.compressionType, sourceCodec)
+    //todo first和last偏移量, 最大maxTimestamp, 最大时间戳，
+    //todo sourceCodec：数据原始编码方式   targetCodec：目标的编码方式
     LogAppendInfo(firstOffset, lastOffset, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, logStartOffset,
       RecordConversionStats.EMPTY, sourceCodec, targetCodec, shallowMessageCount, validBytesCount, monotonic, lastOffsetOfFirstBatch)
   }
@@ -1254,7 +1270,7 @@ class Log(@volatile var dir: File,
         return FetchDataInfo(currentNextOffsetMetadata, MemoryRecords.EMPTY, firstEntryIncomplete = false,
           abortedTransactions = abortedTransactions)
       }
-
+      //todo 基于startOffset 二分查找 定位segment
       var segmentEntry = segments.floorEntry(startOffset)
 
       // return error on attempt to read beyond the log end offset or read below log start offset
@@ -1285,6 +1301,7 @@ class Log(@volatile var dir: File,
             segment.size
           }
         }
+        //todo segment read
         val fetchInfo = segment.read(startOffset, maxOffset, maxLength, maxPosition, minOneMessage)
         if (fetchInfo == null) {
           segmentEntry = segments.higherEntry(segmentEntry.getKey)
@@ -1629,6 +1646,7 @@ class Log(@volatile var dir: File,
         Note that this is only required for pre-V2 message formats because these do not store the first message offset
         in the header.
       */
+      //todo roll新的segment文件
       appendInfo.firstOffset match {
         case Some(firstOffset) => roll(Some(firstOffset))
         case None => roll(Some(maxOffsetInMessages - Integer.MAX_VALUE))
@@ -1644,6 +1662,7 @@ class Log(@volatile var dir: File,
    *
    * @return The newly rolled segment
    */
+  // todo logSegment 包含log文件和 offsetIndex文件 todo 默认indexInterval = 4KB
   def roll(expectedNextOffset: Option[Long] = None): LogSegment = {
     maybeHandleIOException(s"Error while rolling log segment for $topicPartition in dir ${dir.getParent}") {
       val start = time.hiResClockMs()
@@ -1691,7 +1710,7 @@ class Log(@volatile var dir: File,
         // we manually override the state offset here prior to taking the snapshot.
         producerStateManager.updateMapEndOffset(newOffset)
         producerStateManager.takeSnapshot()
-
+        // todo logSegment 包含log文件和 offsetIndex文件 todo 默认indexInterval = 4KB
         val segment = LogSegment.open(dir,
           baseOffset = newOffset,
           config,
@@ -1699,6 +1718,7 @@ class Log(@volatile var dir: File,
           fileAlreadyExists = false,
           initFileSize = initFileSize,
           preallocate = config.preallocate)
+        // todo roll函数中添加segment
         addSegment(segment)
         // We need to update the segment base offset and append position data of the metadata when log rolls.
         // The next offset should not change.

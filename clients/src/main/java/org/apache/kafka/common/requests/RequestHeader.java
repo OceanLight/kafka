@@ -107,7 +107,7 @@ public class RequestHeader extends AbstractRequestResponse {
     public int correlationId() {
         return correlationId;
     }
-
+    //todo 生成responseHeader 仅包含correlationId
     public ResponseHeader toResponseHeader() {
         return new ResponseHeader(correlationId);
     }
@@ -116,9 +116,9 @@ public class RequestHeader extends AbstractRequestResponse {
         try {
             short apiKey = buffer.getShort();
             short apiVersion = buffer.getShort();
-            Schema schema = schema(apiKey, apiVersion);
-            buffer.rewind();
-            return new RequestHeader(schema.read(buffer));
+            Schema schema = schema(apiKey, apiVersion); //todo 生成完整的schema，不带数据
+            buffer.rewind(); //todo bytebuffer置0
+            return new RequestHeader(schema.read(buffer)); //todo 读取schema, position移动
         } catch (InvalidRequestException e) {
             throw e;
         } catch (Throwable  ex) {

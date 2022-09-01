@@ -77,6 +77,7 @@ class LogManager(logDirs: Seq[File],
   // Each element in the queue contains the log object to be deleted and the time it is scheduled for deletion.
   private val logsToBeDeleted = new LinkedBlockingQueue[(Log, Long)]()
 
+  //todo 活跃的_liveLogDirs 包含空目录
   private val _liveLogDirs: ConcurrentLinkedQueue[File] = createAndValidateLogDirs(logDirs, initialOfflineDirs)
   @volatile private var _currentDefaultConfig = initialDefaultConfig
   @volatile private var numRecoveryThreadsPerDataDir = recoveryThreadsPerDataDir
@@ -142,6 +143,7 @@ class LogManager(logDirs: Seq[File],
    * <li> Check that each path is a readable directory
    * </ol>
    */
+  // todo 基于initialOfflineDirs生成liveLogDirs
   private def createAndValidateLogDirs(dirs: Seq[File], initialOfflineDirs: Seq[File]): ConcurrentLinkedQueue[File] = {
     val liveLogDirs = new ConcurrentLinkedQueue[File]()
     val canonicalPaths = mutable.HashSet.empty[String]
@@ -150,13 +152,14 @@ class LogManager(logDirs: Seq[File],
       try {
         if (initialOfflineDirs.contains(dir))
           throw new IOException(s"Failed to load ${dir.getAbsolutePath} during broker startup")
-
+        //todo dir不存在mkdir
         if (!dir.exists) {
           info(s"Log directory ${dir.getAbsolutePath} not found, creating it.")
           val created = dir.mkdirs()
           if (!created)
             throw new IOException(s"Failed to create data directory ${dir.getAbsolutePath}")
         }
+        //todo 非文件 or 读取失败 报错
         if (!dir.isDirectory || !dir.canRead)
           throw new IOException(s"${dir.getAbsolutePath} is not a readable log directory.")
 
@@ -935,6 +938,7 @@ class LogManager(logDirs: Seq[File],
   }
 
   // logDir should be an absolute path
+  // todo 基于initialOfflineDirs 生成 _liveLogDirs。 getAbsolutePath作为文件标识
   def isLogDirOnline(logDir: String): Boolean = {
     // The logDir should be an absolute path
     if (!logDirs.exists(_.getAbsolutePath == logDir))
@@ -982,6 +986,7 @@ object LogManager {
     val defaultLogConfig = LogConfig(defaultProps)
 
     // read the log configurations from zookeeper
+    // todo 获取所有的topic /brokers/topics。 获取topic的配置 /config/topics/{name}
     val (topicConfigs, failed) = zkClient.getLogConfigs(zkClient.getAllTopicsInCluster, defaultProps)
     if (!failed.isEmpty) throw failed.head._2
 

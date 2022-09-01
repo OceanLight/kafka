@@ -60,7 +60,9 @@ public class RequestContext {
             ApiKeys apiKey = header.apiKey();
             try {
                 short apiVersion = header.apiVersion();
+                // todo buffer转换成struct
                 Struct struct = apiKey.parseRequest(apiVersion, buffer);
+                //todo 基于data生成request对象， 基于schema生成Struct， 在通过工厂类将struct转化成各类Request对象。
                 AbstractRequest body = AbstractRequest.parseRequest(apiKey, apiVersion, struct);
                 return new RequestAndSize(body, struct.sizeOf());
             } catch (Throwable ex) {
@@ -75,6 +77,7 @@ public class RequestContext {
 
     public Send buildResponse(AbstractResponse body) {
         ResponseHeader responseHeader = header.toResponseHeader();
+        //todo 转化成Send类型用于发送， 基于byteBuffer
         return body.toSend(connectionId, responseHeader, apiVersion());
     }
 

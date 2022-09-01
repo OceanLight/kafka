@@ -41,7 +41,7 @@ public class Schema extends Type {
             Field def = fs[i];
             if (fieldsByName.containsKey(def.name))
                 throw new SchemaException("Schema contains a duplicate field: " + def.name);
-            this.fields[i] = new BoundField(def, this, i);
+            this.fields[i] = new BoundField(def, this, i); //todo boundFeild 补充下标信息
             this.fieldsByName.put(def.name, this.fields[i]);
         }
     }

@@ -86,7 +86,7 @@ object RequestChannel extends Logging {
     @volatile var recordNetworkThreadTimeCallback: Option[Long => Unit] = None
 
     val session = Session(context.principal, context.clientAddress)
-    private val bodyAndSize: RequestAndSize = context.parseRequest(buffer)
+    private val bodyAndSize: RequestAndSize = context.parseRequest(buffer) //todo buffer中的header已经读取完成，生成request对象
 
     def header: RequestHeader = context.header
     def sizeOfBodyInBytes: Int = bodyAndSize.size

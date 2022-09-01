@@ -739,7 +739,7 @@ class Partition(val topicPartition: TopicPartition,
             throw new NotEnoughReplicasException(s"The size of the current ISR ${inSyncReplicas.map(_.brokerId)} " +
               s"is insufficient to satisfy the min.isr requirement of $minIsr for partition $topicPartition")
           }
-
+          //todo log追加records
           val info = log.appendAsLeader(records, leaderEpoch = this.leaderEpoch, isFromClient,
             interBrokerProtocolVersion)
 

@@ -250,6 +250,7 @@ private[kafka] object LogValidator extends Logging {
                                                  isFromClient: Boolean,
                                                  interBrokerProtocolVersion: ApiVersion): ValidationAndOffsetAssignResult = {
       // No in place assignment situation 1 and 2
+      //todo 压缩格式一致的情况下， inplace更新
       var inPlaceAssignment = sourceCodec == targetCodec && toMagic > RecordBatch.MAGIC_VALUE_V0
 
       var maxTimestamp = RecordBatch.NO_TIMESTAMP
