@@ -42,6 +42,7 @@ class ByteBufferLogInputStream implements LogInputStream<MutableRecordBatch> {
         int remaining = buffer.remaining();
         //todo 从buffer中读取batch的大小
         Integer batchSize = nextBatchSize();
+        //todo 如果remaining< batchSize的大小，说明batch不全，就丢弃。
         if (batchSize == null || remaining < batchSize)
             return null;
 
@@ -49,7 +50,7 @@ class ByteBufferLogInputStream implements LogInputStream<MutableRecordBatch> {
 
         ByteBuffer batchSlice = buffer.slice();
         batchSlice.limit(batchSize);
-        //修改buffer中position的位置
+        //todo 修改buffer中position的位置
         buffer.position(buffer.position() + batchSize);
 
         if (magic > RecordBatch.MAGIC_VALUE_V1)

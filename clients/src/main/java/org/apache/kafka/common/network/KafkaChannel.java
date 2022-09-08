@@ -353,10 +353,10 @@ public class KafkaChannel {
 
     public Send write() throws IOException {
         Send result = null;
-        //todo 循环写入，直到写完位置
+        //todo 循环写入，直到写完位置，发送完成，立即删除OP_WRITE事件
         if (send != null && send(send)) {
             result = send;
-            send = null;
+            send = null; //todo send发送完 置空。 如何防止再次写入数据？
         }
         return result;
     }
@@ -384,6 +384,7 @@ public class KafkaChannel {
 
     private boolean send(Send send) throws IOException {
         send.writeTo(transportLayer);
+        //todo 发送完成，立即删除OP_WRITE事件
         if (send.completed())
             transportLayer.removeInterestOps(SelectionKey.OP_WRITE);
 

@@ -380,8 +380,8 @@ public class Selector implements Selectable, AutoCloseable {
      * @param send The request to send
      */
     public void send(Send send) {
-        String connectionId = send.destination();
-        KafkaChannel channel = openOrClosingChannelOrFail(connectionId);
+        String connectionId = send.destination(); //todo nodeId
+        KafkaChannel channel = openOrClosingChannelOrFail(connectionId); //todo 一个nodeId对应一个KafkaChannel
         if (closingChannels.containsKey(connectionId)) {
             // ensure notification via `disconnected`, leave channel in the state in which closing was triggered
             this.failedSends.add(connectionId);
@@ -471,7 +471,7 @@ public class Selector implements Selectable, AutoCloseable {
                 keysWithBufferedRead.removeAll(readyKeys); //so no channel gets polled twice
                 Set<SelectionKey> toPoll = keysWithBufferedRead;
                 keysWithBufferedRead = new HashSet<>(); //poll() calls will repopulate if needed
-                //todo 核心函数 从channel中读取数据，生成多个NetworkReceive
+                //todo 核心函数， 处理读写请求， 从channel中读取数据，生成多个NetworkReceive。处理读写请求。
                 pollSelectionKeys(toPoll, false, endSelect);
             }
 
@@ -479,7 +479,7 @@ public class Selector implements Selectable, AutoCloseable {
             pollSelectionKeys(readyKeys, false, endSelect);
             // Clear all selected keys so that they are included in the ready count for the next select
             readyKeys.clear();
-
+            // todo  手动处理新连接，新链接的key加入immediatelyConnectedKeys中
             pollSelectionKeys(immediatelyConnectedKeys, true, endSelect);
             immediatelyConnectedKeys.clear();
         } else {
@@ -524,12 +524,13 @@ public class Selector implements Selectable, AutoCloseable {
 
             try {
                 /* complete any connections that have finished their handshake (either normally or immediately) */
-                // todo 握手
+                // todo 处理isConnectable类型，握手
                 if (isImmediatelyConnected || key.isConnectable()) {
                     if (channel.finishConnect()) { //todo 判断连接是否建立+鉴权
                         this.connected.add(channel.id());
                         this.sensors.connectionCreated.record();
                         SocketChannel socketChannel = (SocketChannel) key.channel();
+                        //todo 建立连接后打印日志
                         log.debug("Created socket with SO_RCVBUF = {}, SO_SNDBUF = {}, SO_TIMEOUT = {} to node {}",
                                 socketChannel.socket().getReceiveBufferSize(),
                                 socketChannel.socket().getSendBufferSize(),
@@ -539,7 +540,7 @@ public class Selector implements Selectable, AutoCloseable {
                         continue;
                     }
                 }
-                //todo 连接就绪
+                //todo 连接就绪，鉴权握手。
                 /* if channel is not ready finish prepare */
                 if (channel.isConnected() && !channel.ready()) {
                     try {
@@ -551,8 +552,9 @@ public class Selector implements Selectable, AutoCloseable {
                     if (channel.ready())
                         sensors.successfulAuthentication.record();
                 }
-                // todo 读取数据， 从channel中读取数据，生成多个NetworkReceive。
-                // todo
+                //todo 处理isReadable类型
+                //todo 读取数据， 从channel中读取数据，生成多个NetworkReceive。数据写入stagedReceives
+                //todo 数据写入stagedReceives
                 attemptRead(key, channel);
 
                 if (channel.hasBytesBuffered()) {
@@ -564,7 +566,8 @@ public class Selector implements Selectable, AutoCloseable {
                     //cleared to avoid the overhead of checking every time.
                     keysWithBufferedRead.add(key);
                 }
-                //todo 写数据
+                //todo 处理isWritable类型
+                //todo 写数据，发送完成，立即删除OP_WRITE事件，通一个node同时只会有一个请求。
                 /* if channel is ready write to any sockets that have space in their buffer and for which we have data */
                 if (channel.ready() && key.isWritable()) {
                     Send send;
@@ -951,7 +954,7 @@ public class Selector implements Selectable, AutoCloseable {
                 KafkaChannel channel = entry.getKey();
                 if (!explicitlyMutedChannels.contains(channel)) {// todo 没有mute
                     Deque<NetworkReceive> deque = entry.getValue();
-                    addToCompletedReceives(channel, deque); //todo 每个channel移动一个NetworkReceive到completedReceives
+                    addToCompletedReceives(channel, deque); //todo 每个stagedReceives中channel移动NetworkReceive到completedReceives
                     if (deque.isEmpty())
                         iter.remove();
                 }

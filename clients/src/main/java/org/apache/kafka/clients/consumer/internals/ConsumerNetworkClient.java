@@ -122,9 +122,12 @@ public class ConsumerNetworkClient implements Closeable {
                                               AbstractRequest.Builder<?> requestBuilder,
                                               int requestTimeoutMs) {
         long now = time.milliseconds();
+        //todo completionHandler 是callback回调函数
         RequestFutureCompletionHandler completionHandler = new RequestFutureCompletionHandler();
+        //todo clientRequest 带有RequestFutureCompletionHandler的对象， RequestFutureCompletionHandler包含RequestFuture, 此函数的return
         ClientRequest clientRequest = client.newClientRequest(node.idString(), requestBuilder, now, true,
                 requestTimeoutMs, completionHandler);
+        //todo 添加请求到unsent中，clientRequest对象包含callback函数
         unsent.put(node, clientRequest);
 
         // wakeup the client in case it is blocking in poll so that we can send the queued request
@@ -244,12 +247,14 @@ public class ConsumerNetworkClient implements Closeable {
      */
     public void poll(Timer timer, PollCondition pollCondition, boolean disableWakeup) {
         // there may be handlers which need to be invoked if we woke up the previous call to poll
+        //todo pendingCompletion的handler调用fireComplete函数，来调用listeners的onComplete函数
         firePendingCompletedRequests();
 
         lock.lock();
         try {
             // Handle async disconnects prior to attempting any sends
             handlePendingDisconnects();
+            //todo 第二步， trySend. unsent -> inFlightRequests, 标记chanel为写状态, 请求写入kafkaChannel的Send中。
 
             // send all the requests we can send now
             long pollDelayMs = trySend(timer.currentTimeMs());
@@ -264,6 +269,12 @@ public class ConsumerNetworkClient implements Closeable {
                     pollTimeout = Math.min(pollTimeout, retryBackoffMs);
                 client.poll(pollTimeout, timer.currentTimeMs());
             } else {
+                //todo 第三步， 将kafkaChannel中的send发送出去。写入completedSends。 判断在inFlightRequests队列中是否有未发送的send对象，同时只能有一个写请求。
+                //todo 第四步， 等待下次poll时， 读数据. 生成多个NetworkReceive。数据写入stagedReceives
+                //todo 第五步， 函数addToCompletedReceives， 将stagedReceives数据写入completedReceives
+                //todo 第六步， 从CompletedReceives获取数据解析成ClientResponse, 包含req的callback
+                //todo 第七步， completeResponses 中调用callback, callBackHandler 加入pendingCompletion中。
+                //todo callBackHandler中包含response+future
                 client.poll(0, timer.currentTimeMs());
             }
             timer.update();
@@ -282,18 +293,21 @@ public class ConsumerNetworkClient implements Closeable {
 
             // try again to send requests since buffer space may have been
             // cleared or a connect finished in the poll
+            //todo 再次发送
             trySend(timer.currentTimeMs());
 
             // fail requests that couldn't be sent if they have expired
             failExpiredRequests(timer.currentTimeMs());
 
             // clean unsent requests collection to keep the map from growing indefinitely
+            //todo 清空unsent对象。
             unsent.clean();
         } finally {
             lock.unlock();
         }
 
         // called without the lock to avoid deadlock potential if handlers need to acquire locks
+        //todo 第八步 pendingCompletion的handler调用fireComplete函数，来调用listeners的onComplete函数
         firePendingCompletedRequests();
     }
 
@@ -464,6 +478,7 @@ public class ConsumerNetworkClient implements Closeable {
         long pollDelayMs = maxPollTimeoutMs;
 
         // send any requests that can be sent now
+        //todo unsent是map结构<node, Seq<ClientRequest> >
         for (Node node : unsent.nodes()) {
             Iterator<ClientRequest> iterator = unsent.requestIterator(node);
             if (iterator.hasNext())
@@ -471,6 +486,9 @@ public class ConsumerNetworkClient implements Closeable {
 
             while (iterator.hasNext()) {
                 ClientRequest request = iterator.next();
+                //todo 判断在inFlightRequests队列中是否有未发送的send对象，transport是否ready, 是否鉴权完成，  inFlightRequests < maxLimit
+                //todo 生成Send对象，并在kafkaClient中的KafkaChannel中的send为空情况下，设置为send
+                //todo send方法 生成InFlightRequest，加入队列
                 if (client.ready(node, now)) {
                     client.send(request, now);
                     iterator.remove();
@@ -616,6 +634,7 @@ public class ConsumerNetworkClient implements Closeable {
 
         public void put(Node node, ClientRequest request) {
             // the lock protects the put from a concurrent removal of the queue for the node
+            //todo 带锁， 心跳线程也会写。
             synchronized (unsent) {
                 ConcurrentLinkedQueue<ClientRequest> requests = unsent.get(node);
                 if (requests == null) {

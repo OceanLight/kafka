@@ -49,7 +49,7 @@ final class InFlightRequests {
             reqs = new ArrayDeque<>();
             this.requests.put(destination, reqs);
         }
-        reqs.addFirst(request);
+        reqs.addFirst(request); //todo 添加在队首
         inFlightRequestCount.incrementAndGet();
     }
 
@@ -67,7 +67,7 @@ final class InFlightRequests {
      * Get the oldest request (the one that will be completed next) for the given node
      */
     public NetworkClient.InFlightRequest completeNext(String node) {
-        NetworkClient.InFlightRequest inFlightRequest = requestQueue(node).pollLast();
+        NetworkClient.InFlightRequest inFlightRequest = requestQueue(node).pollLast(); //todo 取队尾
         inFlightRequestCount.decrementAndGet();
         return inFlightRequest;
     }
@@ -77,7 +77,7 @@ final class InFlightRequests {
      * @param node The node id
      */
     public NetworkClient.InFlightRequest lastSent(String node) {
-        return requestQueue(node).peekFirst();
+        return requestQueue(node).peekFirst();  //todo 取队首
     }
 
     /**

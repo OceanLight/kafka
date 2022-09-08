@@ -254,6 +254,7 @@ public class SubscriptionState {
     }
 
     private TopicPartitionState assignedState(TopicPartition tp) {
+        //todo 获取到topicPartition 对应的state， 获取对应offset-> position
         TopicPartitionState state = this.assignment.stateValue(tp);
         if (state == null)
             throw new IllegalStateException("No current assignment for partition " + tp);
@@ -389,7 +390,7 @@ public class SubscriptionState {
                     partitionState.reset(defaultResetStrategy);
             }
         }
-
+        //todo 缺少offset reset的策略是报错，
         if (!partitionsWithNoOffsets.isEmpty())
             throw new NoOffsetForPartitionException(partitionsWithNoOffsets);
     }

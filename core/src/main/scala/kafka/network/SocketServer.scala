@@ -621,7 +621,7 @@ private[kafka] class Processor(val id: Int,
           // todo 将byteBuffer转化成Struct, 在转化成request， 在转化成Send 加入requestQueue队列，等待后处理, 由handler去处理请求，并生成Response
           // todo mute selectoer
           processCompletedReceives()
-          // todo send后的回调和 unmute selector
+          // todo send后的回调 和 unmute selector
           processCompletedSends()
           // todo 释放连接
           processDisconnected()

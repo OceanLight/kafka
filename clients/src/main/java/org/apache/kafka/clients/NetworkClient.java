@@ -277,11 +277,13 @@ public class NetworkClient implements KafkaClient {
      * @param now The current timestamp
      * @return True if we are ready to send to the given node
      */
+    //todo 判断就是ready的情况下，lazy connect
     @Override
     public boolean ready(Node node, long now) {
         if (node.isEmpty())
             throw new IllegalArgumentException("Cannot connect to empty node " + node);
 
+        // todo 判断transport是否ready, 是否鉴权完成，  inFlightRequests < maxLimit
         if (isReady(node, now))
             return true;
 
@@ -408,6 +410,7 @@ public class NetworkClient implements KafkaClient {
      * @param now The current time in ms
      * @return true if the node is ready
      */
+    //todo 判断transport是否ready, 是否鉴权完成，  inFlightRequests < maxLimit
     @Override
     public boolean isReady(Node node, long now) {
         // if we need to update our metadata now declare all requests unready to make metadata requests first
@@ -487,7 +490,7 @@ public class NetworkClient implements KafkaClient {
     }
 
     private void doSend(ClientRequest clientRequest, boolean isInternalRequest, long now, AbstractRequest request) {
-        String destination = clientRequest.destination();
+        String destination = clientRequest.destination(); //todo nodeId
         RequestHeader header = clientRequest.makeHeader(request.version());
         if (log.isDebugEnabled()) {
             int latestClientVersion = clientRequest.apiKey().latestVersion();
@@ -499,6 +502,7 @@ public class NetworkClient implements KafkaClient {
                         header.apiVersion(), clientRequest.apiKey(), request, clientRequest.correlationId(), destination);
             }
         }
+        //todo 构造请求NetworkSend，序列化header + body, 生成byteBuffer对象
         Send send = request.toSend(destination, header);
         InFlightRequest inFlightRequest = new InFlightRequest(
                 clientRequest,
@@ -508,6 +512,7 @@ public class NetworkClient implements KafkaClient {
                 send,
                 now);
         this.inFlightRequests.add(inFlightRequest);
+        //todo select 标记send, kafkaChannel同时只有一个Send
         selector.send(send);
     }
 
@@ -535,6 +540,7 @@ public class NetworkClient implements KafkaClient {
 
         long metadataTimeout = metadataUpdater.maybeUpdate(now);
         try {
+            //todo 处理读写请求
             this.selector.poll(Utils.min(timeout, metadataTimeout, defaultRequestTimeoutMs));
         } catch (IOException e) {
             log.error("Unexpected error during I/O", e);
@@ -543,12 +549,18 @@ public class NetworkClient implements KafkaClient {
         // process completed actions
         long updatedNow = this.time.milliseconds();
         List<ClientResponse> responses = new ArrayList<>();
+        //todo 发送成功生成ClientResponse 加入 responses， 不带response
+        //todo 先发送 先收返回。 所以此次response和inFlightRequests的lastSent中的callBack是对应的。
         handleCompletedSends(responses, updatedNow);
+        //todo 从CompletedReceives获取数据解析成ClientResponse
+        //todo 将response生成ClientResponse 加入 responses. 带有callback。
+        //todo 先发送 先收返回。 所以此次response和lastSent中的callBack是对应的。
         handleCompletedReceives(responses, updatedNow);
         handleDisconnections(responses, updatedNow);
         handleConnections();
         handleInitiateApiVersionRequests(updatedNow);
         handleTimedOutRequests(responses, updatedNow);
+        //todo 调用response对象中的callback
         completeResponses(responses);
 
         return responses;
@@ -770,8 +782,13 @@ public class NetworkClient implements KafkaClient {
      */
     private void handleCompletedSends(List<ClientResponse> responses, long now) {
         // if no response is expected then when the send is completed, return it
+        //todo 每一轮poll只有一个completedSends。 ???
         for (Send send : this.selector.completedSends()) {
+            //todo 先发送 先收返回。 所以此次response和lastSent中的callBack是对应的。
             InFlightRequest request = this.inFlightRequests.lastSent(send.destination());
+            //todo 如果不需要Response的话， 在send完成以后就删除inFlightRequests， 并回调。
+            //todo 如果需要的话，就跳过。由handleCompletedReceives处理。
+            //todo 不需要等待Response的话，加队首，取队首。
             if (!request.expectResponse) {
                 this.inFlightRequests.completeLastSent(send.destination());
                 responses.add(request.completed(null, now));
@@ -806,6 +823,7 @@ public class NetworkClient implements KafkaClient {
     private void handleCompletedReceives(List<ClientResponse> responses, long now) {
         for (NetworkReceive receive : this.selector.completedReceives()) {
             String source = receive.source();
+            //todo 从队尾取， 先发 先回。
             InFlightRequest req = inFlightRequests.completeNext(source);
             Struct responseStruct = parseStructMaybeUpdateThrottleTimeMetrics(receive.payload(), req.header,
                 throttleTimeSensor, now);

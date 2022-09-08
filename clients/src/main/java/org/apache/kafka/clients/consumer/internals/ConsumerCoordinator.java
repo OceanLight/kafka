@@ -307,8 +307,11 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @return true iff the operation succeeded
      */
     public boolean poll(Timer timer) {
+        //todo completedOffsetCommits
         invokeCompletedOffsetCommitCallbacks();
-
+        //todo 死循环直到coordinator构造出来,并使用ready()函数连接.
+        //todo 启动心跳线程
+        //todo 死循环，发送JOIN_GROUP+SYNC_GROUP直到group方案就绪。
         if (subscriptions.partitionsAutoAssigned()) {
             // Always update the heartbeat last poll time so that the heartbeat thread does not leave the
             // group proactively due to application inactivity even if (say) the coordinator cannot be found.
@@ -337,7 +340,9 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                         return false;
                     }
                 }
-
+                //todo 同步，死循环直到coordinator构造出来,并使用ready()函数连接.
+                //todo 启动心跳线程
+                //todo 同步，死循环直到group方案就绪。
                 if (!ensureActiveGroup(timer)) {
                     return false;
                 }
@@ -491,11 +496,12 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @return true iff the operation completed within the timeout
      */
     public boolean refreshCommittedOffsetsIfNeeded(Timer timer) {
+        //todo 订阅的topic中 offset缺失的topic
         final Set<TopicPartition> missingFetchPositions = subscriptions.missingFetchPositions();
-
+        //todo 同步，发送OFFSET_FETCH请求，死循环等待future就绪，获取缺失的offset， 不包含没有提交过commit的partition的数据。
         final Map<TopicPartition, OffsetAndMetadata> offsets = fetchCommittedOffsets(missingFetchPositions, timer);
         if (offsets == null) return false;
-
+        //todo 更新offset
         for (final Map.Entry<TopicPartition, OffsetAndMetadata> entry : offsets.entrySet()) {
             final TopicPartition tp = entry.getKey();
             final long offset = entry.getValue().offset();
@@ -511,6 +517,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param partitions The partitions to fetch offsets for
      * @return A map from partition to the committed offset or null if the operation timed out
      */
+    //todo 拉取offset
     public Map<TopicPartition, OffsetAndMetadata> fetchCommittedOffsets(final Set<TopicPartition> partitions,
                                                                         final Timer timer) {
         if (partitions.isEmpty()) return Collections.emptyMap();
@@ -529,6 +536,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             if (pendingCommittedOffsetRequest != null) {
                 future = pendingCommittedOffsetRequest.response;
             } else {
+                //todo OFFSET_FETCH请求拉取offset
                 future = sendOffsetFetchRequest(partitions);
                 pendingCommittedOffsetRequest = new PendingCommittedOffsetRequest(partitions, generation, future);
 
@@ -610,6 +618,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         // ensure the commit has a chance to be transmitted (without blocking on its completion).
         // Note that commits are treated as heartbeats by the coordinator, so there is no need to
         // explicitly allow heartbeats through delayed task execution.
+        //todo 在下次poll数据之前, 尽可能提交请求。
         client.pollNoWakeup();
     }
 
@@ -680,7 +689,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
 
         return false;
     }
-
+    //todo 如果自动提交offset, 判断上次提交时间，超过intervalMs后，发起OFFSET_COMMIT请求，异步不阻塞提交，到unsent。
+    //todo 默认每5s提交一次offset。
     public void maybeAutoCommitOffsetsAsync(long now) {
         if (autoCommitEnabled) {
             nextAutoCommitTimer.update(now);

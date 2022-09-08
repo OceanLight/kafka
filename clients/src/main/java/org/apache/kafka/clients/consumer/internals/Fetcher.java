@@ -115,7 +115,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
     private final int minBytes;
     private final int maxBytes;
     private final int maxWaitMs;
-    private final int fetchSize;
+    private final int fetchSize; //todo 默认1M
     private final long retryBackoffMs;
     private final long requestTimeoutMs;
     private final int maxPollRecords;
@@ -157,11 +157,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         this.client = client;
         this.metadata = metadata;
         this.subscriptions = subscriptions;
-        this.minBytes = minBytes;
-        this.maxBytes = maxBytes;
-        this.maxWaitMs = maxWaitMs;
-        this.fetchSize = fetchSize;
-        this.maxPollRecords = maxPollRecords;
+        this.minBytes = minBytes;  //todo 默认1
+        this.maxBytes = maxBytes;  //todo 默认50M
+        this.maxWaitMs = maxWaitMs; //todo 默认500
+        this.fetchSize = fetchSize; //todo 默认1M
+        this.maxPollRecords = maxPollRecords; //todo 默认500
         this.checkCrcs = checkCrcs;
         this.keyDeserializer = keyDeserializer;
         this.valueDeserializer = valueDeserializer;
@@ -204,6 +204,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
      * @return number of fetches sent
      */
     public synchronized int sendFetches() {
+        //todo 获取到node对应的FetchRequestData， 基于FetchRequestData构造请求，send
+        //todo FetchRequestData
+        //todo 生成每个node对应Seq[TopicPartition, PartitionData]。node没有in-flight的请求，发起请求。
         Map<Node, FetchSessionHandler.FetchRequestData> fetchRequestMap = prepareFetchRequests();
         for (Map.Entry<Node, FetchSessionHandler.FetchRequestData> entry : fetchRequestMap.entrySet()) {
             final Node fetchTarget = entry.getKey();
@@ -217,6 +220,10 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
             if (log.isDebugEnabled()) {
                 log.debug("Sending {} {} to broker {}", isolationLevel, data.toString(), fetchTarget);
             }
+            //todo 发送send请求, send函数，添加请求到unsent中， 构造clientRequest，加入unsent list中
+            //todo 返回RequestFuture<ClientResponse>的引用是为了执行addListener。 RequestFuture<ClientResponse> 并添加Listener
+            //todo completedFetches构造
+            //todo send方法，生成clientRequest 包含 RequestFutureCompletionHandler的对象，RequestFutureCompletionHandler包含RequestFuture, 此函数的return
             client.send(fetchTarget, request)
                     .addListener(new RequestFutureListener<ClientResponse>() {
                         @Override
@@ -381,11 +388,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
 
         final Map<TopicPartition, Long> offsetResetTimestamps = new HashMap<>();
         for (final TopicPartition partition : partitions) {
+            //todo 对于offset没有的情况，使用reset策略，生成timeStamp -1 -2
             Long timestamp = offsetResetStrategyTimestamp(partition);
             if (timestamp != null)
                 offsetResetTimestamps.put(partition, timestamp);
         }
-
+        //todo 构造基于时间戳(最早/最晚)的PartitionData请求，向partition的leader发起LIST_OFFSETS请求。然后手动seek
         resetOffsetsAsync(offsetResetTimestamps);
     }
 
@@ -476,16 +484,17 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
      *         the defaultResetPolicy is NONE
      * @throws TopicAuthorizationException If there is TopicAuthorization error in fetchResponse.
      */
+    //todo 从completedFetches中获取数据，更新PartitionStates中tp对应state中的offset，超出recordsRemaining的舍弃
     public Map<TopicPartition, List<ConsumerRecord<K, V>>> fetchedRecords() {
         Map<TopicPartition, List<ConsumerRecord<K, V>>> fetched = new HashMap<>();
-        int recordsRemaining = maxPollRecords;
-
+        int recordsRemaining = maxPollRecords; //todo 默认500条数据
+        //todo 从ConcurrentLinkedQueue<CompletedFetch>中获取数据
         try {
             while (recordsRemaining > 0) {
                 if (nextInLineRecords == null || nextInLineRecords.isFetched) {
                     CompletedFetch completedFetch = completedFetches.peek();
-                    if (completedFetch == null) break;
-
+                    if (completedFetch == null) break; //todo 拉取不到数据跳出循环
+                    //todo 数据写入nextInLineRecords
                     try {
                         nextInLineRecords = parseCompletedFetch(completedFetch);
                     } catch (Exception e) {
@@ -502,6 +511,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                     }
                     completedFetches.poll();
                 } else {
+                    //todo 从nextInLineRecords中读数据, 更新PartitionStates中tp对应state中的offset
                     List<ConsumerRecord<K, V>> records = fetchRecords(nextInLineRecords, recordsRemaining);
                     TopicPartition partition = nextInLineRecords.partition;
                     if (!records.isEmpty()) {
@@ -541,11 +551,13 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         } else {
             long position = subscriptions.position(partitionRecords.partition);
             if (partitionRecords.nextFetchOffset == position) {
+                //todo 超出maxRecords的record丢弃， 每生成一条 nextFetchOffset + 1
                 List<ConsumerRecord<K, V>> partRecords = partitionRecords.fetchRecords(maxRecords);
 
                 long nextOffset = partitionRecords.nextFetchOffset;
                 log.trace("Returning fetched records at offset {} for assigned partition {} and update " +
                         "position to {}", position, partitionRecords.partition, nextOffset);
+                //todo 更新定于的tp对应的nextOffset
                 subscriptions.position(partitionRecords.partition, nextOffset);
 
                 Long partitionLag = subscriptions.partitionLag(partitionRecords.partition, isolationLevel);
@@ -589,9 +601,10 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         // Add the topics to the metadata to do a single metadata fetch.
         for (TopicPartition tp : partitionResetTimestamps.keySet())
             metadata.add(tp.topic());
-
+        //todo 构造基于时间戳(最早/最晚)的PartitionData请求，向partition的leader发起LIST_OFFSETS请求。
         Map<Node, Map<TopicPartition, ListOffsetRequest.PartitionData>> timestampsToSearchByNode =
                 groupListOffsetRequests(partitionResetTimestamps, new HashSet<>());
+
         for (Map.Entry<Node, Map<TopicPartition, ListOffsetRequest.PartitionData>> entry : timestampsToSearchByNode.entrySet()) {
             Node node = entry.getKey();
             final Map<TopicPartition, ListOffsetRequest.PartitionData> resetTimestamps = entry.getValue();
@@ -610,6 +623,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                         TopicPartition partition = fetchedOffset.getKey();
                         OffsetData offsetData = fetchedOffset.getValue();
                         ListOffsetRequest.PartitionData requestedReset = resetTimestamps.get(partition);
+                        //todo 手动seek
                         resetOffsetIfNeeded(partition, requestedReset.timestamp, offsetData);
                     }
                 }
@@ -845,10 +859,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
             this.partitionsToRetry = new HashSet<>();
         }
     }
-
+    //todo ????
     private List<TopicPartition> fetchablePartitions() {
         Set<TopicPartition> exclude = new HashSet<>();
         List<TopicPartition> fetchable = subscriptions.fetchablePartitions();
+        //todo 去除completedFetches
         if (nextInLineRecords != null && !nextInLineRecords.isFetched) {
             exclude.add(nextInLineRecords.partition);
         }
@@ -863,10 +878,14 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
      * Create fetch requests for all nodes for which we have assigned partitions
      * that have no existing requests in flight.
      */
+    //todo 生成每个node对应Seq[TopicPartition, PartitionData]。node没有in-flight的请求，发起请求。
     private Map<Node, FetchSessionHandler.FetchRequestData> prepareFetchRequests() {
         Cluster cluster = metadata.fetch();
+        //todo node对应的Builder
         Map<Node, FetchSessionHandler.Builder> fetchable = new LinkedHashMap<>();
+        //todo 请求PartitionData 加入到 fetchable。 遍历tp
         for (TopicPartition partition : fetchablePartitions()) {
+            //todo 找到partition对应的leader Node
             Node node = cluster.leaderFor(partition);
             if (node == null) {
                 metadata.requestUpdate();
@@ -877,10 +896,13 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                 // going to be failed anyway before being sent, so skip the send for now
                 log.trace("Skipping fetch for partition {} because node {} is awaiting reconnect backoff", partition, node);
             } else if (client.hasPendingRequests(node)) {
+                //todo 节点hasInFlightRequests就跳过。
                 log.trace("Skipping fetch for partition {} because there is an in-flight request to {}", partition, node);
             } else {
+                //todo node是leader， node没有in-flight的请求，发起请求。
                 // if there is a leader and no in-flight requests, issue a new fetch
                 FetchSessionHandler.Builder builder = fetchable.get(node);
+                //todo Node粒度构造sessionHandler。一个node对应一个builder。
                 if (builder == null) {
                     FetchSessionHandler handler = sessionHandler(node.id());
                     if (handler == null) {
@@ -890,8 +912,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                     builder = handler.newBuilder();
                     fetchable.put(node, builder);
                 }
-
+                //todo position作为offset，fetchSize 作为 maxBytes
+                //todo 获取到topicPartition对应的state，获取对应offset-> position。 在fetchRecord函数中更新offset
+                //todo 构造PartitionData
                 long position = this.subscriptions.position(partition);
+                //todo PartitionData 请求参数： position-> offset,  fetchSize -> maxBytes
                 builder.add(partition, new FetchRequest.PartitionData(position, FetchRequest.INVALID_LOG_START_OFFSET,
                     this.fetchSize, Optional.empty()));
 
@@ -899,10 +924,13 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                     partition, position, node);
             }
         }
+        //todo 生成每个node对应Seq[TopicPartition, PartitionData]
         Map<Node, FetchSessionHandler.FetchRequestData> reqs = new LinkedHashMap<>();
+        //todo 基于fetchable 构造请求<Node, FetchRequestData>
         for (Map.Entry<Node, FetchSessionHandler.Builder> entry : fetchable.entrySet()) {
             reqs.put(entry.getKey(), entry.getValue().build());
         }
+
         return reqs;
     }
 
@@ -933,6 +961,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
 
                 log.trace("Preparing to read {} bytes of data for partition {} with offset {}",
                         partition.records.sizeInBytes(), tp, position);
+                //todo 在iterator中，如果remaining< batchSize的大小，说明batch不全，就丢弃。
                 Iterator<? extends RecordBatch> batches = partition.records.batches().iterator();
                 partitionRecords = new PartitionRecords(tp, completedFetch, batches);
 
@@ -1201,11 +1230,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                             continue;
                         }
                     }
-
+                    //todo 基于currentBatch 构造records
                     records = currentBatch.streamingIterator(decompressionBufferSupplier);
                 } else {
                     Record record = records.next();
                     // skip any records out of range
+                    //todo 跳过batch中旧的record
                     if (record.offset() >= nextFetchOffset) {
                         // we only do validation when the message should not be skipped.
                         maybeEnsureValid(record);
@@ -1244,9 +1274,12 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                     }
                     if (lastRecord == null)
                         break;
+                    //todo currentBatch 包含多条record
+                    //todo 基于lastRecord 生成 kv格式的ConsumerRecord
                     records.add(parseRecord(partition, currentBatch, lastRecord));
                     recordsRead++;
                     bytesRead += lastRecord.sizeInBytes();
+                    //todo 更新offset
                     nextFetchOffset = lastRecord.offset() + 1;
                     // In some cases, the deserialization may have thrown an exception and the retry may succeed,
                     // we allow user to move forward in this case.

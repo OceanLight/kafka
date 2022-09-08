@@ -89,7 +89,7 @@ public abstract class AbstractRequest extends AbstractRequestResponse {
     public short version() {
         return version;
     }
-
+    //todo serialize 序列化header + body, 生成byteBuffer对象
     public Send toSend(String destination, RequestHeader header) {
         return new NetworkSend(destination, serialize(header));
     }
@@ -97,6 +97,7 @@ public abstract class AbstractRequest extends AbstractRequestResponse {
     /**
      * Use with care, typically {@link #toSend(String, RequestHeader)} should be used instead.
      */
+    //todo  序列化 header + body
     public ByteBuffer serialize(RequestHeader header) {
         return serialize(header.toStruct(), toStruct());
     }

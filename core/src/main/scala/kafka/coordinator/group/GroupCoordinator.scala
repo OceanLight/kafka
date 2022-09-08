@@ -125,6 +125,7 @@ class GroupCoordinator(val brokerId: Int,
           if (memberId != JoinGroupRequest.UNKNOWN_MEMBER_ID) {
             responseCallback(joinError(memberId, Errors.UNKNOWN_MEMBER_ID))
           } else {
+            //todo create group
             val group = groupManager.addGroup(new GroupMetadata(groupId, Empty, time))
             doJoinGroup(group, memberId, clientId, clientHost, rebalanceTimeoutMs, sessionTimeoutMs, protocolType, protocols, responseCallback)
           }
@@ -202,6 +203,7 @@ class GroupCoordinator(val brokerId: Int,
           case Empty | Stable =>
             if (memberId == JoinGroupRequest.UNKNOWN_MEMBER_ID) {
               // if the member id is unknown, register the member to the group
+              //todo 注册member到group
               addMemberAndRebalance(rebalanceTimeoutMs, sessionTimeoutMs, clientId, clientHost, protocolType,
                 protocols, group, responseCallback)
             } else {
@@ -396,7 +398,7 @@ class GroupCoordinator(val brokerId: Int,
 
     groupManager.getGroup(groupId) match {
       case None =>
-        responseCallback(Errors.UNKNOWN_MEMBER_ID)
+        responseCallback(Errors.UNKNOWN_MEMBER_ID) //todo groupId不存在。
 
       case Some(group) => group.inLock {
         group.currentState match {
@@ -737,6 +739,7 @@ class GroupCoordinator(val brokerId: Int,
 
   private def maybePrepareRebalance(group: GroupMetadata, reason: String) {
     group.inLock {
+      //todo true
       if (group.canRebalance)
         prepareRebalance(group, reason)
     }
@@ -803,6 +806,7 @@ class GroupCoordinator(val brokerId: Int,
       }
 
       if (!group.is(Dead)) {
+        //todo 状态更新为CompletingRebalance
         group.initNextGeneration()
         if (group.is(Empty)) {
           info(s"Group ${group.groupId} with generation ${group.generationId} is now empty " +

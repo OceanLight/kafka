@@ -722,7 +722,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             Sensor throttleTimeSensor = Fetcher.throttleTimeSensor(metrics, metricsRegistry.fetcherMetrics);
 
             int heartbeatIntervalMs = config.getInt(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG);
-
+            //todo 构造networkClient, 包含一个Selector
             NetworkClient netClient = new NetworkClient(
                     new Selector(config.getLong(ConsumerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG), metrics, time, metricGrpPrefix, channelBuilder, logContext),
                     this.metadata,
@@ -739,6 +739,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     new ApiVersions(),
                     throttleTimeSensor,
                     logContext);
+            //todo ConsumerNetworkClient 包含 构造networkClient
             this.client = new ConsumerNetworkClient(
                     logContext,
                     netClient,
@@ -748,13 +749,16 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG),
                     heartbeatIntervalMs); //Will avoid blocking an extended period of time to prevent heartbeat thread starvation
             OffsetResetStrategy offsetResetStrategy = OffsetResetStrategy.valueOf(config.getString(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG).toUpperCase(Locale.ROOT));
+            //todo 订阅 offset策略, 在没有发现offset的请求下 默认的offset策略 LATEST, EARLIEST, NONE
             this.subscriptions = new SubscriptionState(offsetResetStrategy);
+            //todo kafka分区分配策略RoundRobin和Range
             this.assignors = config.getConfiguredInstances(
                     ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG,
                     PartitionAssignor.class);
 
             int maxPollIntervalMs = config.getInt(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG);
             int sessionTimeoutMs = config.getInt(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG);
+            //todo 构造协调器 coordinator
             this.coordinator = new ConsumerCoordinator(logContext,
                     this.client,
                     groupId,
@@ -773,6 +777,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     this.interceptors,
                     config.getBoolean(ConsumerConfig.EXCLUDE_INTERNAL_TOPICS_CONFIG),
                     config.getBoolean(ConsumerConfig.LEAVE_GROUP_ON_CLOSE_CONFIG));
+            //todo 构造fetcher, 包含ConsumerNetworkClient
             this.fetcher = new Fetcher<>(
                     logContext,
                     this.client,
@@ -1167,15 +1172,28 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private ConsumerRecords<K, V> poll(final Timer timer, final boolean includeMetadataInTimeout) {
         acquireAndEnsureOpen();
         try {
+            //todo 没有订阅topic的情况
             if (this.subscriptions.hasNoSubscriptionOrUserAssignment()) {
                 throw new IllegalStateException("Consumer is not subscribed to any topics or assigned any partitions");
             }
 
             // poll for new data until the timeout expires
+            //todo 没超时继续循环，等待结果返回。
             do {
                 client.maybeTriggerWakeup();
-
+                //todo coordinator+心跳线程+group方案+offset管理。
                 if (includeMetadataInTimeout) {
+                    //todo 死循环直到coordinator构造出来,并使用ready()函数连接.
+                    //todo 启动心跳线程, 默认timeout 10s wait 0.1s
+                    //todo 死循环直到group方案就绪。
+                    //todo 自动提交offset, 开启的情况下，判断上次提交时间，超过intervalMs后，发起OFFSET_COMMIT请求，异步不阻塞提交，到unsent。默认每5s提交一次offset
+
+                    //todo 获取offset，确定所有的offset可用。
+                    //todo 同步，向协调节点发送OFFSET_FETCH请求，死循环等待future就绪，获取缺失的offset， 不包含没有提交过commit的partition的数据。
+                    //todo 更新有效的offset
+                    //todo offset缺失， reset的策略也缺失时报错。
+                    //todo 发送LIST_OFFSETS的请求，异步更新本地offset。
+                    //todo 构造基于时间戳(最早/最晚)的PartitionData请求，异步向partition的leader发起LIST_OFFSETS请求。然后手动seek
                     if (!updateAssignmentMetadataIfNeeded(timer)) {
                         return ConsumerRecords.empty();
                     }
@@ -1184,7 +1202,17 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                         log.warn("Still waiting for metadata");
                     }
                 }
-
+                //todo  pollForFetches 发起网络请求poll数据。 从completedFetches中拉取数据
+                //todo fetch请求，判断节点hasInFlightRequests就跳过。 请求写入unsent中
+                //todo 第二步， trySend. unsent->inFlightRequests, 标记chanel为写状态, 请求写入kafkaChannel的Send中。
+                //todo 第三步， poll函数中将kafkaChannel中的send发送出去。写入completedSends。 判断在inFlightRequests队列中是否有未发送的send对象，同时只能有一个写请求。
+                //todo 第四步， 等待下次poll时， 读数据. 生成多个NetworkReceive。数据写入stagedReceives
+                //todo 第五步， 函数addToCompletedReceives， 将stagedReceives数据写入completedReceives
+                //todo 第六步， 从CompletedReceives获取数据解析成ClientResponse, 包含req的callback
+                //todo 第七步， completeResponses 中调用callback，  callBackHandler 加入pendingCompletion中。所有请求的handler是相同的类。
+                //todo 第八步,  pendingCompletion的handler调用fireComplete函数，来调用listeners的onComplete函数，数据写入completedFetches
+                //todo 第九步， 基于completedFetches生成record, 并更新tp对应state的offset。 跳过batch中offset的旧的record。
+                //todo 在iterator中，如果remaining< batchSize的大小，说明batch不全，就丢弃。
                 final Map<TopicPartition, List<ConsumerRecord<K, V>>> records = pollForFetches(timer);
                 if (!records.isEmpty()) {
                     // before returning the fetched records, we can send off the next round of fetches
@@ -1193,6 +1221,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     //
                     // NOTE: since the consumed position has already been updated, we must not allow
                     // wakeups or any other errors to be triggered prior to returning the fetched records.
+                    // todo 第一步：fetcher.sendFetches() 将包含callback的request放入unsent中
+                    // todo fetcher的回调函数，写入completedFetches
                     if (fetcher.sendFetches() > 0 || client.hasPendingRequests()) {
                         client.pollNoWakeup();
                     }
@@ -1211,10 +1241,19 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * Visible for testing
      */
     boolean updateAssignmentMetadataIfNeeded(final Timer timer) {
+        //todo 死循环直到coordinator构造出来,并使用ready()函数连接.
+        //todo 启动心跳线程, 默认timeout 10s wait 0.1s
+        //todo 死循环直到group方案就绪。
+        //todo 自动提交offset, 开启的情况下，判断上次提交时间，超过intervalMs后，发起OFFSET_COMMIT请求，异步不阻塞提交，到unsent。默认每5s提交一次offset
         if (!coordinator.poll(timer)) {
             return false;
         }
-
+        //todo 获取offset
+        //todo 同步，向协调节点发送OFFSET_FETCH请求，死循环等待future就绪，获取缺失的offset， 不包含没有提交过commit的partition的数据。
+        //todo 更新有效的offset
+        //todo offset缺失， reset的策略也缺失时报错。
+        //todo 发送LIST_OFFSETS的请求，异步更新本地offset。
+        //todo 构造基于时间戳(最早/最晚)的PartitionData请求，向partition的leader发起LIST_OFFSETS请求。然后手动seek
         return updateFetchPositions(timer);
     }
 
@@ -1222,12 +1261,15 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         long pollTimeout = Math.min(coordinator.timeToNextPoll(timer.currentTimeMs()), timer.remainingMs());
 
         // if data is available already, return it immediately
+        //todo 从completeResponses返回上次没消费完的record
         final Map<TopicPartition, List<ConsumerRecord<K, V>>> records = fetcher.fetchedRecords();
         if (!records.isEmpty()) {
             return records;
         }
 
         // send any new fetches (won't resend pending fetches)
+        //todo 第一步：fetcher.sendFetches()。生成新的fetch请求 Map<Node, FetchSessionHandler.FetchRequestData>
+        //todo fetch请求，判断节点hasInFlightRequests就跳过。 请求写入unsent中
         fetcher.sendFetches();
 
         // We do not want to be stuck blocking in poll if we are missing some positions
@@ -1240,6 +1282,14 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         }
 
         Timer pollTimer = time.timer(pollTimeout);
+        //todo client  poll函数带锁。
+        //todo 第二步， trySend. unsent->inFlightRequests, 标记chanel为写状态, 请求写入kafkaChannel的Send中。
+        //todo 第三步， 将kafkaChannel中的send发送出去。写入completedSends。 判断在inFlightRequests队列中是否有未发送的send对象，同时只能有一个写请求。
+        //todo 第四步， 等待下次poll时， 读数据. 生成多个NetworkReceive。数据写入stagedReceives
+        //todo 第五步， 函数addToCompletedReceives， 将stagedReceives数据写入completedReceives
+        //todo 第六步， 从CompletedReceives获取数据解析成ClientResponse, 包含req的callback
+        //todo 第七步， completeResponses 中调用callback， callBackHandler 加入pendingCompletion中。
+        //todo 第八步 pendingCompletion的handler调用fireComplete函数，来调用listeners的onComplete函数，数据写入completedFetches
         client.poll(pollTimer, () -> {
             // since a fetch might be completed by the background thread, we need this poll condition
             // to ensure that we do not block unnecessarily in poll()
@@ -1252,7 +1302,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         if (coordinator.rejoinNeededOrPending()) {
             return Collections.emptyMap();
         }
-
+        //todo 第九步，基于completedFetches生成record, 并更新tp对应state的offset。 跳过batch中offset的旧的record。
+        //todo 在iterator中，如果remaining< batchSize的大小，说明batch不全，就丢弃。
         return fetcher.fetchedRecords();
     }
 
@@ -1402,6 +1453,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     * @throws org.apache.kafka.common.errors.TimeoutException if the timeout expires before successful completion
     *            of the offset commit
     */
+    //todo 同步提交offset, 死循环直到future就绪，才退出。
     @Override
     public void commitSync(final Map<TopicPartition, OffsetAndMetadata> offsets, final Duration timeout) {
         acquireAndEnsureOpen();
@@ -2155,6 +2207,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
      * @return true iff the operation completed without timing out
      */
     private boolean updateFetchPositions(final Timer timer) {
+        //todo 定于的topic的partitionStates中position（offset）正常，就返回true
         cachedSubscriptionHashAllFetchPositions = subscriptions.hasAllFetchPositions();
         if (cachedSubscriptionHashAllFetchPositions) return true;
 
@@ -2163,15 +2216,20 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         // coordinator lookup if there are partitions which have missing positions, so
         // a consumer with manually assigned partitions can avoid a coordinator dependence
         // by always ensuring that assigned partitions have an initial position.
+        //todo 同步，向协调节点发送OFFSET_FETCH请求，死循环等待future就绪，获取缺失的offset， 不包含没有提交过commit的partition的数据。
+        //todo 更新有效的offset
         if (!coordinator.refreshCommittedOffsetsIfNeeded(timer)) return false;
 
         // If there are partitions still needing a position and a reset policy is defined,
         // request reset using the default policy. If no reset strategy is defined and there
         // are partitions with a missing position, then we will raise an exception.
+        //todo offset缺失， reset的策略也缺失时报错。
         subscriptions.resetMissingPositions();
 
         // Finally send an asynchronous request to lookup and update the positions of any
         // partitions which are awaiting reset.
+        //todo 发送LIST_OFFSETS的请求，异步更新本地offset。
+        //todo 构造基于时间戳(最早/最晚)的PartitionData请求，向partition的leader发起LIST_OFFSETS请求。然后手动seek
         fetcher.resetOffsetsIfNeeded();
 
         return true;
